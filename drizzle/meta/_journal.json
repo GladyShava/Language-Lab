@@ -1,0 +1,48 @@
+{
+  "version": "7",
+  "dialect": "sqlite",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "6",
+      "when": 1784742781430,
+      "tag": "0000_ancient_killer_shrike",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "6",
+      "when": 1784746030939,
+      "tag": "0001_lethal_fallen_one",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1784746592476,
+      "tag": "0002_clear_lorna_dane",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "6",
+      "when": 1784761735217,
+      "tag": "0003_crazy_blizzard",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "6",
+      "when": 1784831104349,
+      "tag": "0004_aspiring_warbound",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "6",
+      "when": 1784842121564,
+      "tag": "0005_talented_lilandra",
+      "breakpoints": true
+    }
+  ]
+}

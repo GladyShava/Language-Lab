@@ -1,0 +1,20 @@
+export interface CommunityLibraryItem {
+  id: string;
+  objectiveId: string;
+  content: string;
+  styleLabel: string;
+  vocabulary: string[];
+  source: "curated" | "community";
+}
+
+export const demoCommunityLibrary: CommunityLibraryItem[] = [
+  { id: "library_intro_direct", objectiveId: "obj_en_warmup", content: "I work with people from different backgrounds, and I enjoy making complicated ideas easier to understand. In my free time, I like walking, reading, and discovering new places.", styleLabel: "Concise and direct", vocabulary: ["backgrounds", "complicated", "discovering"], source: "curated" },
+  { id: "library_intro_story", objectiveId: "obj_en_warmup", content: "I have always been curious about how people connect. That curiosity led me to international education, where I support teams that work across cultures. I am happiest when a conversation helps someone see a new possibility.", styleLabel: "Reflective and personal", vocabulary: ["curiosity", "connect", "possibility"], source: "curated" },
+  { id: "library_intro_warm", objectiveId: "obj_en_warmup", content: "I would describe myself as practical, optimistic, and interested in people. I enjoy collaborative work, especially when a group is solving a difficult problem. Outside of work, cooking is one of my favorite ways to slow down and connect with others.", styleLabel: "Warm and descriptive", vocabulary: ["optimistic", "collaborative", "connect"], source: "curated" },
+  { id: "library_change_structured", objectiveId: "obj_en_narration", content: "When a project changed unexpectedly, I first clarified the new priorities. Then I helped the team redistribute the work and agree on short check-ins. That structure helped us stay calm and deliver the essential result.", styleLabel: "Structured narrative", vocabulary: ["clarified", "redistribute", "essential"], source: "curated" },
+  { id: "library_change_reflective", objectiveId: "obj_en_narration", content: "A sudden change once left my team uncertain about what to do next. I focused on listening before proposing a plan. The experience taught me that people adapt more easily when they understand both the reason for a change and their role in it.", styleLabel: "Reflective narrative", vocabulary: ["uncertain", "proposing", "adapt"], source: "curated" },
+  { id: "library_culture_practical", objectiveId: "obj_en_opinion", content: "Effective cross-cultural communication requires clear questions and careful listening. Instead of assuming agreement, I summarize what I heard and invite the other person to clarify. That simple habit often prevents confusion.", styleLabel: "Practical and specific", vocabulary: ["assuming", "summarize", "clarify"], source: "curated" },
+  { id: "library_culture_conceptual", objectiveId: "obj_en_opinion", content: "Communication becomes effective when curiosity is stronger than judgment. People need to recognize that the same words can carry different expectations. Respectful follow-up creates the shared context a diverse group needs.", styleLabel: "Conceptual and concise", vocabulary: ["curiosity", "judgment", "context"], source: "curated" },
+  { id: "library_leadership_balanced", objectiveId: "obj_en_global_challenge", content: "Global leaders must make timely decisions while information is still changing. The challenge is to act without pretending that every outcome is certain. Transparent communication helps communities understand the decision, the tradeoffs, and what may change next.", styleLabel: "Balanced analysis", vocabulary: ["outcome", "transparent", "tradeoffs"], source: "curated" },
+  { id: "library_leadership_people", objectiveId: "obj_en_global_challenge", content: "One major challenge is building trust across communities with different needs. Leaders cannot rely on one message for every audience. They need local insight, consistent values, and the humility to adjust their approach.", styleLabel: "People-centered analysis", vocabulary: ["audience", "insight", "humility"], source: "curated" },
+];
