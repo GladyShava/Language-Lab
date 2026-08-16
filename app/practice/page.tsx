@@ -76,7 +76,8 @@ export default function PracticePage() {
   const [profile, setProfile] = useState<StudentProfile | null | undefined>(undefined);
   const [authMode, setAuthMode] = useState<"create" | "sign-in">("sign-in");
   const [introSpeaking, setIntroSpeaking] = useState(false);
-  const [introAutoplayBlocked, setIntroAutoplayBlocked] = useState(false);
+  const [introPaused, setIntroPaused] = useState(false);
+  const [introHeard, setIntroHeard] = useState(false);
   const [asuEmail, setAsuEmail] = useState("");
   const [password, setPassword] = useState("");
   const [preferredFirstName, setPreferredFirstName] = useState("");
@@ -144,8 +145,13 @@ export default function PracticePage() {
   function prepareIntroAudio() {
     const audio = introAudio.current ?? new Audio("/audio/platform-introduction.mp3");
     introAudio.current = audio;
-    audio.onplay = () => { setError(""); setIntroAutoplayBlocked(false); setIntroSpeaking(true); };
-    audio.onended = () => setIntroSpeaking(false);
+    audio.onplay = () => { setError(""); setIntroPaused(false); setIntroSpeaking(true); };
+    audio.onended = () => {
+      setIntroSpeaking(false);
+      setIntroPaused(false);
+      setIntroHeard(true);
+      window.localStorage.setItem("opi-platform-introduction-heard", "true");
+    };
     audio.onerror = () => { setIntroSpeaking(false); setError("The introduction recording could not play."); };
     return audio;
   }
@@ -160,27 +166,8 @@ export default function PracticePage() {
       .catch(() => setProfile(null));
   }, []);
   useEffect(() => {
-    if (profile !== null) return;
-    const audio = prepareIntroAudio();
-    audio.currentTime = 0;
-    void audio.play().catch(() => {
-      setIntroSpeaking(false);
-      setIntroAutoplayBlocked(true);
-    });
-  }, [profile]);
-  useEffect(() => {
-    if (!introAutoplayBlocked || profile !== null) return;
-    const resumeIntro = () => {
-      const audio = prepareIntroAudio();
-      void audio.play().catch(() => undefined);
-    };
-    window.addEventListener("pointerdown", resumeIntro, { once: true });
-    window.addEventListener("keydown", resumeIntro, { once: true });
-    return () => {
-      window.removeEventListener("pointerdown", resumeIntro);
-      window.removeEventListener("keydown", resumeIntro);
-    };
-  }, [introAutoplayBlocked, profile]);
+    setIntroHeard(window.localStorage.getItem("opi-platform-introduction-heard") === "true");
+  }, []);
   useEffect(() => { conversationEnd.current?.scrollIntoView({ behavior: "smooth", block: "nearest" }); }, [snapshot?.turns.length, busy]);
   useEffect(() => {
     if (!isRecording) return;
@@ -301,13 +288,13 @@ export default function PracticePage() {
     if (introSpeaking) {
       introAudio.current?.pause();
       setIntroSpeaking(false);
+      setIntroPaused(true);
       return;
     }
     const audio = prepareIntroAudio();
     if (audio.ended) audio.currentTime = 0;
     void audio.play().catch(() => {
       setIntroSpeaking(false);
-      setIntroAutoplayBlocked(true);
       setError("The introduction recording could not play. Check your device volume and try again.");
     });
   }
@@ -599,7 +586,7 @@ export default function PracticePage() {
             <div className="platform-film-controls">
               <button type="button" className="platform-film-play" onClick={playPlatformIntro} aria-pressed={introSpeaking}>
                 <span aria-hidden="true">{introSpeaking ? "❚❚" : "▶"}</span>
-                {introSpeaking ? "Pause introduction" : "Play introduction"}
+                {introSpeaking ? "Pause introduction" : introPaused ? "Resume introduction" : introHeard ? "Replay introduction" : "Hear how it works"}
               </button>
             </div>
           </section>
