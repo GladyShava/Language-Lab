@@ -389,6 +389,7 @@ textarea:focus, input:focus { outline: 2px solid rgba(1, 121, 183, 0.22); border
 .voice-capture { margin-top: 0.7rem; padding: 0.7rem; display: flex; flex-wrap: wrap; align-items: center; gap: 0.7rem; border: 1px solid var(--line); background: var(--soft); color: var(--muted); font-size: var(--type-small); }
 .voice-first-capture { padding: 1rem; display: grid; grid-template-columns: minmax(180px, auto) 1fr; gap: 0.8rem 1rem; border: 1px solid var(--line); border-radius: 8px; background: var(--soft); }
 .voice-first-capture.recording { border-color: var(--navy); background: #f2f6fa; }
+.voice-first-capture.preparing { border-color: var(--gold); background: #fff9e8; }
 .voice-first-capture > strong { color: var(--navy); font-size: var(--type-small); font-weight: 700; }
 .voice-first-capture .record-button { min-height: 58px; padding: 0.8rem 1.1rem; justify-content: center; border-color: var(--gold); border-radius: 6px; background: var(--gold); color: var(--navy); }
 .voice-first-capture .record-button.active { border-color: #e74973; background: #fff1f4; color: #93233e; }
@@ -396,6 +397,10 @@ textarea:focus, input:focus { outline: 2px solid rgba(1, 121, 183, 0.22); border
 .microphone-mark { width: 24px; height: 24px; display: grid; place-items: center; border-radius: 50%; background: var(--navy); color: var(--gold); font-size: var(--type-small); line-height: 1; }
 .record-button.active .microphone-mark { background: #93233e; color: var(--white); }
 .recording-time { display: flex; align-items: center; justify-content: flex-end; gap: 0.8rem; color: var(--navy); }
+.recording-preparation { display: flex; align-items: center; justify-content: flex-end; gap: 0.75rem; color: var(--navy); }
+.recording-preparation > strong { width: 48px; height: 48px; display: grid; place-items: center; border-radius: 50%; background: var(--navy); color: var(--gold); font-size: var(--type-base); font-variant-numeric: tabular-nums; }
+.recording-preparation > span { display: grid; gap: 0.1rem; font-weight: 800; }
+.recording-preparation small { color: var(--muted); font-size: var(--type-small); font-weight: 500; }
 .recording-time strong { min-width: 48px; font-size: var(--type-base); font-variant-numeric: tabular-nums; }
 .recording-wave { height: 28px; display: flex; align-items: center; gap: 3px; }
 .recording-wave i { width: 4px; height: 9px; display: block; border-radius: 3px; background: var(--navy); animation: speaking-bar 0.8s ease-in-out infinite; }

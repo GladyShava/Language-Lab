@@ -114,6 +114,7 @@ export default function PracticePage() {
   const [recordingFinalizing, setRecordingFinalizing] = useState(false);
   const [isMayaSpeaking, setIsMayaSpeaking] = useState(false);
   const [canRecord, setCanRecord] = useState(false);
+  const [preparationSeconds, setPreparationSeconds] = useState<number | null>(null);
   const [mayaVoiceMode, setMayaVoiceMode] = useState<MayaVoiceMode>("text");
   const [revealedCoachTurns, setRevealedCoachTurns] = useState<string[]>([]);
   const conversationEnd = useRef<HTMLDivElement>(null);
@@ -129,6 +130,8 @@ export default function PracticePage() {
   const introAudio = useRef<HTMLAudioElement | null>(null);
   const completionCelebrated = useRef(false);
   const completionAudioContext = useRef<AudioContext | null>(null);
+  const preparationTriggered = useRef(false);
+  const preparationCancelled = useRef(false);
 
   const selectedPack = languagePacks.find((definition) => definition.pack.id === selectedPackId) ?? languagePacks[0];
   const answerCount = snapshot?.turns.filter((turn) => turn.role === "learner").length ?? 0;
@@ -136,7 +139,9 @@ export default function PracticePage() {
   const currentStageKey = completed ? "wrap" : selectInterviewStage({ plannedDurationMinutes: practiceMinutes, remainingSeconds }, answerCount);
   const conversationStageIndex = Math.max(0, conversationStageKeys.indexOf(currentStageKey));
   const conversationStages = conversationStageKeys.map((stage) => stageLabels[stage]);
-  const turnState = !canRecord && !recordedBlob
+  const turnState = preparationSeconds !== null
+    ? { label: "Prepare", title: `Recording starts in ${preparationSeconds} seconds`, detail: "Think about your answer. Begin speaking after the beep." }
+    : !canRecord && !recordedBlob
     ? { label: "Listen", title: isMayaSpeaking ? "Maya is speaking" : "Wait for the beep", detail: "Recording will unlock when Maya finishes her question." }
     : isRecording
     ? { label: "Listening", title: "Speak naturally", detail: "Tap Stop recording when you finish your answer." }
@@ -195,6 +200,24 @@ export default function PracticePage() {
     return () => window.clearInterval(timer);
   }, [isRecording]);
   useEffect(() => {
+    if (preparationSeconds === null) return;
+    if (timeExpired) {
+      preparationCancelled.current = true;
+      const timer = window.setTimeout(() => setPreparationSeconds(null), 0);
+      return () => window.clearTimeout(timer);
+    }
+    if (preparationSeconds > 0) {
+      const timer = window.setTimeout(() => setPreparationSeconds((current) => current === null ? null : current - 1), 1000);
+      return () => window.clearTimeout(timer);
+    }
+    if (preparationTriggered.current) return;
+    preparationTriggered.current = true;
+    void playRecordingStartBeep().then(() => {
+      setPreparationSeconds(null);
+      if (!preparationCancelled.current) void startRecording();
+    });
+  }, [preparationSeconds, timeExpired]);
+  useEffect(() => {
     if (!snapshot || completed || countdown !== null || timeExpired) return;
     const timer = window.setInterval(() => {
       setRemainingSeconds((current) => {
@@ -211,9 +234,9 @@ export default function PracticePage() {
     if (timeExpired && isRecording) stopRecording();
   }, [timeExpired, isRecording]);
   useEffect(() => {
-    if (!timeExpired || !snapshot || completed || busy || isRecording || recordingFinalizing || recordedBlob) return;
+    if (!timeExpired || !snapshot || completed || busy || isRecording || preparationSeconds !== null || recordingFinalizing || recordedBlob) return;
     void finishPractice();
-  }, [timeExpired, snapshot, completed, busy, isRecording, recordingFinalizing, recordedBlob]);
+  }, [timeExpired, snapshot, completed, busy, isRecording, preparationSeconds, recordingFinalizing, recordedBlob]);
   useEffect(() => () => {
     speechRecognition.current?.stop();
     mediaStream.current?.getTracks().forEach((track) => track.stop());
@@ -306,6 +329,29 @@ export default function PracticePage() {
     }
   }
 
+  async function playRecordingStartBeep() {
+    try {
+      const context = completionAudioContext.current && completionAudioContext.current.state !== "closed"
+        ? completionAudioContext.current
+        : new AudioContext();
+      completionAudioContext.current = context;
+      if (context.state === "suspended") await context.resume();
+      const oscillator = context.createOscillator();
+      const gain = context.createGain();
+      oscillator.type = "sine";
+      oscillator.frequency.setValueAtTime(1040, context.currentTime);
+      gain.gain.setValueAtTime(0.0001, context.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.2, context.currentTime + 0.02);
+      gain.gain.exponentialRampToValueAtTime(0.0001, context.currentTime + 0.25);
+      oscillator.connect(gain).connect(context.destination);
+      oscillator.start(context.currentTime);
+      oscillator.stop(context.currentTime + 0.26);
+      await new Promise((resolve) => window.setTimeout(resolve, 320));
+    } catch {
+      // Recording still begins if the device blocks the cue sound.
+    }
+  }
+
   async function speakMayaText(text: string, localeTag: string, onFinished?: () => void): Promise<void> {
     if (mayaVoiceMode === "text") { onFinished?.(); return; }
     if (typeof window.speechSynthesis === "undefined" || typeof window.SpeechSynthesisUtterance === "undefined") {
@@ -349,12 +395,20 @@ export default function PracticePage() {
     setResponse(value);
   }
 
+  function prepareToRecord() {
+    if (!canRecord || isMayaSpeaking || preparationSeconds !== null) return;
+    clearRecording();
+    updateResponse("");
+    setError("");
+    preparationTriggered.current = false;
+    preparationCancelled.current = false;
+    setPreparationSeconds(30);
+  }
+
   async function startRecording() {
     if (!canRecord || isMayaSpeaking) return;
     setError("");
     try {
-      clearRecording();
-      updateResponse("");
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       voicedSamples.current = 0;
       const context = new AudioContext();
@@ -493,6 +547,7 @@ export default function PracticePage() {
       const opening = data.snapshot.turns.find((turn) => turn.role === "coach");
       setRevealedCoachTurns(nextVoiceMode === "text" && opening ? [opening.id] : []);
       setCanRecord(false);
+      setPreparationSeconds(null);
       setRemainingSeconds(practiceMinutes * 60); setTimeExpired(false); setRecordingFinalizing(false);
       setSnapshot(data.snapshot); setStorageMode(data.storageMode); setCompleted(false); setCountdown(3); setError(voiceError);
       window.localStorage.setItem("opi_last_session", JSON.stringify({ sessionId: data.snapshot.sessionId, mode: data.storageMode }));
@@ -599,6 +654,9 @@ export default function PracticePage() {
     window.speechSynthesis?.cancel();
     setIsMayaSpeaking(false);
     setCanRecord(false);
+    setPreparationSeconds(null);
+    preparationTriggered.current = false;
+    preparationCancelled.current = true;
     setMayaVoiceMode("text");
     speechRecognition.current?.stop();
     mediaStream.current?.getTracks().forEach((track) => track.stop());
@@ -840,17 +898,18 @@ export default function PracticePage() {
                 <span className={recordedBlob && !voiceDetected ? "turn-state attention" : "turn-state"}>{turnState.label}</span>
                 <div><strong>{turnState.title}</strong><p>{turnState.detail}</p></div>
               </div>
-              <div className={isRecording ? "voice-capture voice-first-capture recording" : "voice-capture voice-first-capture"}>
-                <button type="button" className={isRecording ? "record-button active" : "record-button"} onClick={isRecording ? stopRecording : startRecording} disabled={busy || isMayaSpeaking || (!canRecord && !isRecording) || (timeExpired && !isRecording)}>
+              <div className={isRecording ? "voice-capture voice-first-capture recording" : preparationSeconds !== null ? "voice-capture voice-first-capture preparing" : "voice-capture voice-first-capture"}>
+                <button type="button" className={isRecording ? "record-button active" : "record-button"} onClick={isRecording ? stopRecording : prepareToRecord} disabled={busy || isMayaSpeaking || preparationSeconds !== null || (!canRecord && !isRecording) || (timeExpired && !isRecording)}>
                   <span className="microphone-mark" aria-hidden="true">{isRecording ? "■" : "●"}</span>
-                  <span>{isRecording ? "Stop recording" : !canRecord ? "Wait for the beep" : recordedBlob ? "Record again" : "Start recording"}</span>
+                  <span>{isRecording ? "Stop recording" : preparationSeconds !== null ? `Starting in ${preparationSeconds}` : !canRecord ? "Wait for the beep" : recordedBlob ? "Record again" : "Start recording"}</span>
                 </button>
+                {preparationSeconds !== null && <div className="recording-preparation" role="timer" aria-live="assertive"><strong>{preparationSeconds}</strong><span>Prepare your answer<small>Recording begins after the beep.</small></span></div>}
                 {isRecording && <div className="recording-time"><span className="recording-wave" aria-hidden="true"><i /><i /><i /><i /></span><strong>{String(Math.floor(recordingSeconds / 60)).padStart(2, "0")}:{String(recordingSeconds % 60).padStart(2, "0")}</strong></div>}
                 {recordedPreviewUrl && !isRecording && <><div className="voice-preview"><audio controls src={recordedPreviewUrl} /><button type="button" onClick={clearRecording}>Remove</button></div><label className="save-voice-toggle"><input type="checkbox" checked={recordingConsent} onChange={(event) => setRecordingConsent(event.target.checked)} /><span>Keep my voice recording for replay</span></label></>}
               </div>
               {response.trim() && <div id="practice-response" className="transcript-preview" role="status" aria-live="polite"><span>What Maya heard</span><p>{response}</p></div>}
               {recordedBlob && voiceDetected && !response.trim() && <div id="practice-response" className="transcript-preview quiet" role="status"><span>Transcript unavailable</span><p>Your voice is recorded. Maya may ask you to repeat if the words cannot be understood.</p></div>}
-              <div className="composer-footer"><button type="button" className="finish-link" onClick={finishPractice} disabled={busy || isRecording || recordingFinalizing}>Finish interview</button><button type="submit" className="button button-gold" disabled={busy || isRecording || recordingFinalizing || !recordedBlob || !voiceDetected}>{busy ? "Sending..." : timeExpired ? "Save final answer →" : "Send answer →"}</button></div>
+              <div className="composer-footer"><button type="button" className="finish-link" onClick={finishPractice} disabled={busy || isRecording || preparationSeconds !== null || recordingFinalizing}>Finish interview</button><button type="submit" className="button button-gold" disabled={busy || isRecording || preparationSeconds !== null || recordingFinalizing || !recordedBlob || !voiceDetected}>{busy ? "Sending..." : timeExpired ? "Save final answer →" : "Send answer →"}</button></div>
             </form>
           )}
           {error && <p className="form-error conversation-error" role="alert">{error}</p>}

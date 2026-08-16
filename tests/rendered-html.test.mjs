@@ -280,6 +280,42 @@ test("runs localized practice turns for Spanish and Japanese packs", async () =>
   }
 });
 
+test("advances through unused localized questions after answered turns", async () => {
+  const worker = await loadWorker("localized-question-memory");
+  const startResponse = await worker.fetch(new Request("http://localhost/api/practice", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ action: "start", languagePackId: "lang_es_es_v1", participantName: "Ana" }),
+  }), runtimeEnv, runtimeContext);
+  const started = await startResponse.json();
+  const answers = [
+    "Soy estudiante de negocios internacionales y disfruto aprender idiomas con otras personas.",
+    "En mi tiempo libre leo novelas, camino por el parque y cocino con mi familia.",
+    "Mi ciudad natal es grande, diversa y tiene mercados muy interesantes cerca del centro.",
+  ];
+  const questions = [];
+
+  for (const text of answers) {
+    const response = await worker.fetch(new Request("http://localhost/api/practice", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        action: "respond",
+        sessionId: started.snapshot.sessionId,
+        storageMode: started.storageMode,
+        text,
+        practiceMinutes: 10,
+        remainingSeconds: 500,
+      }),
+    }), runtimeEnv, runtimeContext);
+    assert.equal(response.status, 200);
+    const continued = await response.json();
+    questions.push(continued.turns[1].text);
+  }
+
+  assert.equal(new Set(questions).size, questions.length);
+});
+
 test("redirects mixed-language French responses and records the language-use flag", async () => {
   const worker = await loadWorker("french-language-consistency");
   const startResponse = await worker.fetch(new Request("http://localhost/api/practice", {

@@ -22,6 +22,40 @@ const localizedPromptIndex: Record<InterviewStage, number> = {
   wrap: 6,
 };
 
+const normalizePrompt = (text: string) => text.toLocaleLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim();
+
+const alternatePrompts: Record<InterviewStage, readonly string[]> = {
+  warmup: [
+    "Walk me through a typical day in your life. Which part of it do you enjoy most?",
+    "Tell me about someone who has influenced you. What did you learn from that person?",
+  ],
+  description: [
+    "Describe a place where you feel comfortable. What makes the atmosphere there distinctive?",
+    "Describe a person you work or study with and explain what makes that person memorable.",
+  ],
+  story: [
+    "Tell me about a time when a plan changed unexpectedly. What happened, and how did you respond?",
+    "Describe a recent challenge from beginning to end. What did the experience teach you?",
+  ],
+  opinion: [
+    "Some people learn best alone, while others prefer a group. Which approach do you prefer, and why?",
+    "What is one change that would improve your community? Explain who would benefit and why.",
+  ],
+  role_play: [
+    "Imagine a hotel cannot find your reservation. Explain the problem to me and ask for a practical solution.",
+    "Imagine you need to change an important appointment at short notice. Explain the situation and negotiate a new time with me.",
+  ],
+  wrap: [
+    "Before we finish, what is one thing you are looking forward to this week?",
+    "To end on an easy question, how would you like to spend your next free day?",
+  ],
+};
+
+function chooseUnaskedPrompt(candidates: readonly string[], coachTurns: readonly string[]): string {
+  const asked = new Set(coachTurns.map(normalizePrompt));
+  return candidates.find((candidate) => !asked.has(normalizePrompt(candidate))) ?? candidates.at(-1) ?? "What would you like to talk about next?";
+}
+
 export class MockConversationProvider implements ConversationProvider {
   readonly name = "adaptive-opi-practice-v2";
   async createOpeningTurn(context: Omit<ConversationContext, "turns"> & { participantName?: string }): Promise<string> {
@@ -43,7 +77,12 @@ export class MockConversationProvider implements ConversationProvider {
       const answeredCount = learnerTurns.filter((turn) => !transcriptUnavailable(turn.text) && analyzeResponseLanguageUse(turn.text, context.localeTag).status !== "mixed_language" && responseUnits(turn.text, context.localeTag) >= 6).length;
       const profile = evaluateAdaptiveConversation(context.turns, context.localeTag);
       const stage = adjustInterviewStage(selectInterviewStage(context.timing, answeredCount), profile.currentStage);
-      return localized.followUps[localizedPromptIndex[stage]] ?? localized.followUps[0];
+      const coachTurns = context.turns.filter((turn) => turn.role === "coach").map((turn) => turn.text);
+      const preferredIndex = localizedPromptIndex[stage];
+      const stageCandidates = stage === "wrap"
+        ? localized.followUps.slice(6)
+        : [...localized.followUps.slice(preferredIndex, 6), ...localized.followUps.slice(0, preferredIndex)];
+      return chooseUnaskedPrompt(stageCandidates, coachTurns);
     }
     const currentPrompt = [...context.turns].reverse().find((turn) => turn.role === "coach")?.text ?? "";
     const assessment = assessResponse(currentPrompt, latest);
@@ -53,12 +92,18 @@ export class MockConversationProvider implements ConversationProvider {
     const profile = evaluateAdaptiveConversation(context.turns, context.localeTag);
     const plannedStage = adjustInterviewStage(selectInterviewStage(context.timing, turnNumber), profile.currentStage);
 
-    if (plannedStage === "wrap") return createAdaptivePrompt("wrap", profile, latest);
-
-    if (turnNumber === 1) {
-      return createPersonalizedAdaptiveFollowUp(profile, latest) ?? createAdaptivePrompt("warmup", profile, latest);
+    const coachTurns = context.turns.filter((turn) => turn.role === "coach").map((turn) => turn.text);
+    if (plannedStage === "wrap") {
+      return chooseUnaskedPrompt([createAdaptivePrompt("wrap", profile, latest), ...alternatePrompts.wrap], coachTurns);
     }
-    return createConnectedAdaptivePrompt(plannedStage, profile, latest);
+
+    let nextPrompt: string;
+    if (turnNumber === 1) {
+      nextPrompt = createPersonalizedAdaptiveFollowUp(profile, latest) ?? createAdaptivePrompt("warmup", profile, latest);
+    } else {
+      nextPrompt = createConnectedAdaptivePrompt(plannedStage, profile, latest);
+    }
+    return chooseUnaskedPrompt([nextPrompt, createAdaptivePrompt(plannedStage, profile, latest), ...alternatePrompts[plannedStage]], coachTurns);
   }
 
   async createClosingTurn(context: ConversationContext): Promise<string> {
