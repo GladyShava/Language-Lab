@@ -596,15 +596,17 @@ export default function PracticePage() {
             <div className="platform-film-shade" />
             <div className="platform-film-brand"><span>THUNDERBIRD</span><strong>AI OPI CONVERSATION STUDIO</strong></div>
             <div className="platform-film-copy" aria-live="polite">
-              <span className="eyebrow eyebrow-light">YOUR JOURNEY · {introScene + 1} OF {introScenes.length}</span>
+              <span className="eyebrow eyebrow-light">AI-GUIDED PRACTICE</span>
               <h2>{introScenes[introScene].title}</h2>
               <p>{introScenes[introScene].detail}</p>
             </div>
-            <div key={`journey-step-${introScene}`} className="entry-step-popup" role="status" aria-label={`Journey step ${introScene + 1}: ${introScenes[introScene].title}`}>
-              <span>0{introScene + 1}</span>
+            <div key={`journey-step-${introScene}`} className="journey-meter" role="status" aria-label={`Journey step ${introScene + 1} of ${introScenes.length}`}>
+              <strong aria-hidden="true">0{introScene + 1}</strong>
               <div>
-                <small>Current step</small>
-                <strong>{introScenes[introScene].title}</strong>
+                <span>Step {introScene + 1} of {introScenes.length}</span>
+                <div className="journey-meter-track" aria-hidden="true">
+                  {introScenes.map((scene, index) => <i key={scene.title} className={index <= introScene ? "active" : ""} />)}
+                </div>
               </div>
             </div>
             <div className="platform-film-controls">
