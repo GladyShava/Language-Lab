@@ -11,6 +11,12 @@ const languagePacks = listLanguagePackDefinitions();
 const normalizeLanguagePackId = (value: string): string => languagePacks.find(
   (definition) => definition.pack.id === value || definition.pack.localeTag === value,
 )?.pack.id ?? defaultLanguagePackId;
+const introScenes = [
+  { title: "Practice real conversation", detail: "A speaking studio created for Thunderbird students preparing for the OPI." },
+  { title: "Listen. Think. Respond.", detail: "Hear Maya’s questions and answer aloud in the language you are practicing." },
+  { title: "Replay your own voice", detail: "Listen back to every response and review the conversation transcript." },
+  { title: "Reflect and improve", detail: "Use your practice feedback to choose what to work on next." },
+] as const;
 const stageLabels: Record<InterviewStage, string> = {
   warmup: "Warm-up",
   description: "Description",
@@ -75,6 +81,7 @@ export default function PracticePage() {
   const [selectedPackId, setSelectedPackId] = useState<string>(defaultLanguagePackId);
   const [profile, setProfile] = useState<StudentProfile | null | undefined>(undefined);
   const [authMode, setAuthMode] = useState<"create" | "sign-in">("sign-in");
+  const [introScene, setIntroScene] = useState(0);
   const [introSpeaking, setIntroSpeaking] = useState(false);
   const [introPaused, setIntroPaused] = useState(false);
   const [introHeard, setIntroHeard] = useState(false);
@@ -165,6 +172,11 @@ export default function PracticePage() {
       })
       .catch(() => setProfile(null));
   }, []);
+  useEffect(() => {
+    if (profile) return;
+    const timer = window.setInterval(() => setIntroScene((scene) => (scene + 1) % introScenes.length), 4500);
+    return () => window.clearInterval(timer);
+  }, [profile]);
   useEffect(() => {
     setIntroHeard(window.localStorage.getItem("opi-platform-introduction-heard") === "true");
   }, []);
@@ -575,19 +587,22 @@ export default function PracticePage() {
     return (
       <main className="workspace-page practice-setup-page profile-gate">
         <div className="profile-gate-layout">
-          <section className="platform-film" aria-label="AI OPI Conversation Studio introduction">
+          <section className={`platform-film platform-film-scene-${introScene + 1}`} aria-label="AI OPI Conversation Studio introduction">
             <div className="platform-film-shade" />
             <div className="platform-film-brand"><span>THUNDERBIRD</span><strong>AI OPI CONVERSATION STUDIO</strong></div>
-            <div className="platform-film-copy">
-              <span className="eyebrow eyebrow-light">OPI PRACTICE</span>
-              <h2>Listen. Speak. Improve.</h2>
-              <p>Practice a real conversation in the language you choose.</p>
+            <div className="platform-film-copy" aria-live="polite">
+              <span className="eyebrow eyebrow-light">HOW IT WORKS · {introScene + 1} OF {introScenes.length}</span>
+              <h2>{introScenes[introScene].title}</h2>
+              <p>{introScenes[introScene].detail}</p>
             </div>
             <div className="platform-film-controls">
               <button type="button" className="platform-film-play" onClick={playPlatformIntro} aria-pressed={introSpeaking}>
                 <span aria-hidden="true">{introSpeaking ? "❚❚" : "▶"}</span>
                 {introSpeaking ? "Pause introduction" : introPaused ? "Resume introduction" : introHeard ? "Replay introduction" : "Hear how it works"}
               </button>
+              <div className="platform-film-progress" aria-label={`Introduction scene ${introScene + 1} of ${introScenes.length}`}>
+                {introScenes.map((scene, index) => <span key={scene.title} className={index === introScene ? "active" : ""} />)}
+              </div>
             </div>
           </section>
           <section className={`profile-card account-profile-card auth-${authMode}`}>
