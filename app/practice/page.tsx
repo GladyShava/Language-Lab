@@ -600,16 +600,13 @@ export default function PracticePage() {
               <h2>{introScenes[introScene].title}</h2>
               <p>{introScenes[introScene].detail}</p>
             </div>
-            <ol className="entry-journey" aria-label="Practice journey">
-              {introScenes.map((scene, index) => (
-                <li key={scene.title} className={index === introScene ? "active" : ""}>
-                  <button type="button" onClick={() => setIntroScene(index)} aria-current={index === introScene ? "step" : undefined}>
-                    <span>0{index + 1}</span>
-                    <strong>{scene.title}</strong>
-                  </button>
-                </li>
-              ))}
-            </ol>
+            <div key={`journey-step-${introScene}`} className="entry-step-popup" role="status" aria-label={`Journey step ${introScene + 1}: ${introScenes[introScene].title}`}>
+              <span>0{introScene + 1}</span>
+              <div>
+                <small>Current step</small>
+                <strong>{introScenes[introScene].title}</strong>
+              </div>
+            </div>
             <div className="platform-film-controls">
               <button type="button" className="platform-film-play" onClick={playPlatformIntro} aria-pressed={introSpeaking}>
                 <span aria-hidden="true">{introSpeaking ? "❚❚" : "▶"}</span>
