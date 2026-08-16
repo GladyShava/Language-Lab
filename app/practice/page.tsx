@@ -12,10 +12,9 @@ const normalizeLanguagePackId = (value: string): string => languagePacks.find(
   (definition) => definition.pack.id === value || definition.pack.localeTag === value,
 )?.pack.id ?? defaultLanguagePackId;
 const introScenes = [
-  { title: "Practice real conversation", detail: "A speaking studio created for Thunderbird students preparing for the OPI." },
-  { title: "Listen. Think. Respond.", detail: "Hear Maya’s questions and answer aloud in the language you are practicing." },
-  { title: "Replay your own voice", detail: "Listen back to every response and review the conversation transcript." },
-  { title: "Reflect and improve", detail: "Use your practice feedback to choose what to work on next." },
+  { title: "Choose a language", detail: "Select the language you want to practice." },
+  { title: "Talk with Maya", detail: "Listen and respond in a natural conversation." },
+  { title: "Replay and review", detail: "Hear your voice and read the conversation transcript." },
 ] as const;
 const stageLabels: Record<InterviewStage, string> = {
   warmup: "Warm-up",
@@ -591,10 +590,18 @@ export default function PracticePage() {
             <div className="platform-film-shade" />
             <div className="platform-film-brand"><span>THUNDERBIRD</span><strong>AI OPI CONVERSATION STUDIO</strong></div>
             <div className="platform-film-copy" aria-live="polite">
-              <span className="eyebrow eyebrow-light">HOW IT WORKS · {introScene + 1} OF {introScenes.length}</span>
+              <span className="eyebrow eyebrow-light">YOUR JOURNEY · {introScene + 1} OF {introScenes.length}</span>
               <h2>{introScenes[introScene].title}</h2>
               <p>{introScenes[introScene].detail}</p>
             </div>
+            <ol className="entry-journey" aria-label="Practice journey">
+              {introScenes.map((scene, index) => (
+                <li key={scene.title} className={index === introScene ? "active" : ""}>
+                  <span>0{index + 1}</span>
+                  <strong>{scene.title}</strong>
+                </li>
+              ))}
+            </ol>
             <div className="platform-film-controls">
               <button type="button" className="platform-film-play" onClick={playPlatformIntro} aria-pressed={introSpeaking}>
                 <span aria-hidden="true">{introSpeaking ? "❚❚" : "▶"}</span>
