@@ -113,6 +113,7 @@ export default function PracticePage() {
   const [timeExpired, setTimeExpired] = useState(false);
   const [recordingFinalizing, setRecordingFinalizing] = useState(false);
   const [isMayaSpeaking, setIsMayaSpeaking] = useState(false);
+  const [canRecord, setCanRecord] = useState(false);
   const [mayaVoiceMode, setMayaVoiceMode] = useState<MayaVoiceMode>("text");
   const [revealedCoachTurns, setRevealedCoachTurns] = useState<string[]>([]);
   const conversationEnd = useRef<HTMLDivElement>(null);
@@ -135,7 +136,9 @@ export default function PracticePage() {
   const currentStageKey = completed ? "wrap" : selectInterviewStage({ plannedDurationMinutes: practiceMinutes, remainingSeconds }, answerCount);
   const conversationStageIndex = Math.max(0, conversationStageKeys.indexOf(currentStageKey));
   const conversationStages = conversationStageKeys.map((stage) => stageLabels[stage]);
-  const turnState = isRecording
+  const turnState = !canRecord && !recordedBlob
+    ? { label: "Listen", title: isMayaSpeaking ? "Maya is speaking" : "Wait for the beep", detail: "Recording will unlock when Maya finishes her question." }
+    : isRecording
     ? { label: "Listening", title: "Speak naturally", detail: "Tap Stop recording when you finish your answer." }
     : recordedBlob && voiceDetected
       ? { label: "Answer ready", title: "Ready to send", detail: voiceNotice }
@@ -229,7 +232,7 @@ export default function PracticePage() {
       if (countdown > 0) { setCountdown((value) => value === null ? null : value - 1); return; }
       setCountdown(null);
       const opening = snapshot.turns[0];
-      if (opening) void speakMayaText(opening.text, snapshot.localeTag);
+      if (opening) void speakMayaText(opening.text, snapshot.localeTag, cueStudentTurn);
     }, countdown > 0 ? 1000 : 500);
     return () => window.clearTimeout(timer);
   }, [countdown, snapshot, mayaVoiceMode]);
@@ -279,12 +282,37 @@ export default function PracticePage() {
     }
   }
 
+  async function cueStudentTurn() {
+    setCanRecord(false);
+    try {
+      const context = completionAudioContext.current && completionAudioContext.current.state !== "closed"
+        ? completionAudioContext.current
+        : new AudioContext();
+      completionAudioContext.current = context;
+      if (context.state === "suspended") await context.resume();
+      const oscillator = context.createOscillator();
+      const gain = context.createGain();
+      oscillator.type = "sine";
+      oscillator.frequency.setValueAtTime(880, context.currentTime);
+      gain.gain.setValueAtTime(0.0001, context.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.16, context.currentTime + 0.02);
+      gain.gain.exponentialRampToValueAtTime(0.0001, context.currentTime + 0.18);
+      oscillator.connect(gain).connect(context.destination);
+      oscillator.start(context.currentTime);
+      oscillator.stop(context.currentTime + 0.19);
+      window.setTimeout(() => setCanRecord(true), 220);
+    } catch {
+      setCanRecord(true);
+    }
+  }
+
   async function speakMayaText(text: string, localeTag: string, onFinished?: () => void): Promise<void> {
     if (mayaVoiceMode === "text") { onFinished?.(); return; }
     if (typeof window.speechSynthesis === "undefined" || typeof window.SpeechSynthesisUtterance === "undefined") {
       setRevealedCoachTurns((current) => [...current]);
       setIsMayaSpeaking(false);
       setError("This browser cannot play Maya's local voice. Her question is shown so you can continue practicing.");
+      onFinished?.();
       return;
     }
     window.speechSynthesis.cancel();
@@ -322,6 +350,7 @@ export default function PracticePage() {
   }
 
   async function startRecording() {
+    if (!canRecord || isMayaSpeaking) return;
     setError("");
     try {
       clearRecording();
@@ -463,6 +492,7 @@ export default function PracticePage() {
       const voiceError = canUseBrowserVoice ? "" : "This browser cannot play Maya's local voice. Her question is shown so you can continue practicing.";
       const opening = data.snapshot.turns.find((turn) => turn.role === "coach");
       setRevealedCoachTurns(nextVoiceMode === "text" && opening ? [opening.id] : []);
+      setCanRecord(false);
       setRemainingSeconds(practiceMinutes * 60); setTimeExpired(false); setRecordingFinalizing(false);
       setSnapshot(data.snapshot); setStorageMode(data.storageMode); setCompleted(false); setCountdown(3); setError(voiceError);
       window.localStorage.setItem("opi_last_session", JSON.stringify({ sessionId: data.snapshot.sessionId, mode: data.storageMode }));
@@ -507,7 +537,7 @@ export default function PracticePage() {
     event.preventDefault();
     if (!snapshot || !recordedBlob || !voiceDetected || busy || isRecording) return;
     const learnerText = response.trim() || "[Spoken response recorded. Automatic transcript unavailable.]";
-    updateResponse(""); setBusy(true); setError("");
+    updateResponse(""); setBusy(true); setCanRecord(false); setError("");
     try {
       const request = await fetch("/api/practice", {
         method: "POST",
@@ -518,7 +548,7 @@ export default function PracticePage() {
       if (!request.ok) throw new Error(data.error ?? "Could not save your response.");
       setSnapshot((current) => current ? { ...current, status: data.completed ? "completed" : current.status, turns: [...current.turns, ...data.turns] } : current);
       const coachTurn = data.turns.find((turn) => turn.role === "coach");
-      if (!data.completed) speakCoachTurn(coachTurn);
+      if (!data.completed) speakCoachTurn(coachTurn, cueStudentTurn);
 
       const learnerTurn = data.turns.find((turn) => turn.role === "learner");
       if (recordedBlob && learnerTurn && recordingConsent) {
@@ -543,7 +573,7 @@ export default function PracticePage() {
         setCompleted(true);
         speakCoachTurn(coachTurn, playCompletionClap);
       }
-    } catch (caught) { updateResponse(learnerText); setError(caught instanceof Error ? caught.message : "Could not save your response."); }
+    } catch (caught) { updateResponse(learnerText); setCanRecord(true); setError(caught instanceof Error ? caught.message : "Could not save your response."); }
     finally { setBusy(false); }
   }
 
@@ -568,6 +598,7 @@ export default function PracticePage() {
   function resetPractice() {
     window.speechSynthesis?.cancel();
     setIsMayaSpeaking(false);
+    setCanRecord(false);
     setMayaVoiceMode("text");
     speechRecognition.current?.stop();
     mediaStream.current?.getTracks().forEach((track) => track.stop());
@@ -761,7 +792,7 @@ export default function PracticePage() {
             </time>
             <span className="speaking-status" role="status" aria-live="polite">
               <span className="speaking-bars" aria-hidden="true"><i /><i /><i /></span>
-              {isMayaSpeaking ? "Maya is speaking" : "Your turn"}
+              {isMayaSpeaking ? "Maya is speaking" : canRecord ? "Your turn" : "Wait for the beep"}
             </span>
           </div>
           <div
@@ -810,9 +841,9 @@ export default function PracticePage() {
                 <div><strong>{turnState.title}</strong><p>{turnState.detail}</p></div>
               </div>
               <div className={isRecording ? "voice-capture voice-first-capture recording" : "voice-capture voice-first-capture"}>
-                <button type="button" className={isRecording ? "record-button active" : "record-button"} onClick={isRecording ? stopRecording : startRecording} disabled={busy || (timeExpired && !isRecording)}>
+                <button type="button" className={isRecording ? "record-button active" : "record-button"} onClick={isRecording ? stopRecording : startRecording} disabled={busy || isMayaSpeaking || (!canRecord && !isRecording) || (timeExpired && !isRecording)}>
                   <span className="microphone-mark" aria-hidden="true">{isRecording ? "■" : "●"}</span>
-                  <span>{isRecording ? "Stop recording" : recordedBlob ? "Record again" : "Start recording"}</span>
+                  <span>{isRecording ? "Stop recording" : !canRecord ? "Wait for the beep" : recordedBlob ? "Record again" : "Start recording"}</span>
                 </button>
                 {isRecording && <div className="recording-time"><span className="recording-wave" aria-hidden="true"><i /><i /><i /><i /></span><strong>{String(Math.floor(recordingSeconds / 60)).padStart(2, "0")}:{String(recordingSeconds % 60).padStart(2, "0")}</strong></div>}
                 {recordedPreviewUrl && !isRecording && <><div className="voice-preview"><audio controls src={recordedPreviewUrl} /><button type="button" onClick={clearRecording}>Remove</button></div><label className="save-voice-toggle"><input type="checkbox" checked={recordingConsent} onChange={(event) => setRecordingConsent(event.target.checked)} /><span>Keep my voice recording for replay</span></label></>}
