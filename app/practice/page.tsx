@@ -179,9 +179,9 @@ export default function PracticePage() {
   }, [pathname]);
   useEffect(() => {
     if (profile) return;
-    const timer = window.setInterval(() => setIntroScene((scene) => (scene + 1) % introScenes.length), 4500);
-    return () => window.clearInterval(timer);
-  }, [profile]);
+    const timer = window.setTimeout(() => setIntroScene((introScene + 1) % introScenes.length), 4500);
+    return () => window.clearTimeout(timer);
+  }, [introScene, profile]);
   useEffect(() => {
     setIntroHeard(window.localStorage.getItem("opi-platform-introduction-heard") === "true");
   }, []);
@@ -603,8 +603,10 @@ export default function PracticePage() {
             <ol className="entry-journey" aria-label="Practice journey">
               {introScenes.map((scene, index) => (
                 <li key={scene.title} className={index === introScene ? "active" : ""}>
-                  <span>0{index + 1}</span>
-                  <strong>{scene.title}</strong>
+                  <button type="button" onClick={() => setIntroScene(index)} aria-current={index === introScene ? "step" : undefined}>
+                    <span>0{index + 1}</span>
+                    <strong>{scene.title}</strong>
+                  </button>
                 </li>
               ))}
             </ol>
@@ -613,9 +615,6 @@ export default function PracticePage() {
                 <span aria-hidden="true">{introSpeaking ? "❚❚" : "▶"}</span>
                 {introSpeaking ? "Pause introduction" : introPaused ? "Resume introduction" : introHeard ? "Replay introduction" : "Hear how it works"}
               </button>
-              <div className="platform-film-progress" aria-label={`Introduction scene ${introScene + 1} of ${introScenes.length}`}>
-                {introScenes.map((scene, index) => <span key={scene.title} className={index === introScene ? "active" : ""} />)}
-              </div>
             </div>
           </section>
           <section className={`profile-card account-profile-card auth-${authMode}`}>
