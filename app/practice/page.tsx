@@ -499,11 +499,6 @@ export default function PracticePage() {
     finally { setBusy(false); }
   }
 
-  function changeProfile() {
-    resetPractice(); setProfile(null); setAsuEmail(""); setPassword(""); setAuthMode("sign-in");
-    void fetch("/api/profile", { method: "DELETE" }).catch(() => undefined);
-  }
-
   async function sendResponse(event: FormEvent) {
     event.preventDefault();
     if (!snapshot || !recordedBlob || !voiceDetected || busy || isRecording) return;
@@ -715,7 +710,6 @@ export default function PracticePage() {
             </label>
             <div className="ready-start-actions">
               <button className="button button-gold" onClick={startPractice} disabled={busy}>{busy ? "Preparing..." : "Start interview ->"}</button>
-              <button className="text-link" onClick={changeProfile}>Change account</button>
             </div>
           </div>
           <figure className="interview-hero-visual" role="img" aria-label="Two graduate students practicing an oral interview in Thunderbird's global campus space">
