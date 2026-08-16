@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { usePathname } from "next/navigation";
 import { FormEvent, useEffect, useRef, useState } from "react";
 import { createInterviewPlan, selectInterviewStage, type InterviewStage } from "@/lib/conversation/time-plan";
 import type { ConversationTurn } from "@/lib/conversation/types";
@@ -77,6 +78,7 @@ declare global {
 }
 
 export default function PracticePage() {
+  const pathname = usePathname();
   const [selectedPackId, setSelectedPackId] = useState<string>(defaultLanguagePackId);
   const [profile, setProfile] = useState<StudentProfile | null | undefined>(undefined);
   const [authMode, setAuthMode] = useState<"create" | "sign-in">("sign-in");
@@ -163,6 +165,10 @@ export default function PracticePage() {
   }
 
   useEffect(() => {
+    if (pathname === "/") {
+      setProfile(null);
+      return;
+    }
     void fetch("/api/profile")
       .then((request) => request.json() as Promise<{ profile: StudentProfile | null }>)
       .then((data) => {
@@ -170,7 +176,7 @@ export default function PracticePage() {
         if (data.profile) setSelectedPackId(normalizeLanguagePackId(data.profile.targetLanguagePackId));
       })
       .catch(() => setProfile(null));
-  }, []);
+  }, [pathname]);
   useEffect(() => {
     if (profile) return;
     const timer = window.setInterval(() => setIntroScene((scene) => (scene + 1) % introScenes.length), 4500);
