@@ -234,18 +234,18 @@ textarea:focus, input:focus { outline: 2px solid rgba(1, 121, 183, 0.22); border
 .streamlined-setup { padding: 2rem; border-top: 5px solid var(--gold); }
 .streamlined-setup .setup-start { margin-top: 1.4rem; }
 .streamlined-setup .form-error, .profile-card .form-error { color: #9b1c31; }
-.profile-gate { min-height: 720px; padding: 2rem; display: grid; place-items: center; background: #edf2f6; }
-.profile-gate-layout { width: min(1180px, 100%); min-height: 590px; overflow: hidden; display: grid; grid-template-columns: minmax(0, 1.05fr) minmax(400px, 0.95fr); border: 1px solid var(--line); background: var(--white); box-shadow: 0 14px 36px rgba(0,31,66,0.08); }
+.profile-gate { min-height: 640px; padding: 1.5rem; display: grid; place-items: center; background: #edf2f6; }
+.profile-gate-layout { width: min(1080px, 100%); min-height: 520px; overflow: hidden; display: grid; grid-template-columns: minmax(0, 0.9fr) minmax(400px, 1.1fr); border: 1px solid var(--line); background: var(--white); box-shadow: 0 14px 36px rgba(0,31,66,0.08); }
 .platform-film { min-width: 0; padding: 2.5rem; position: relative; overflow: hidden; display: flex; flex-direction: column; justify-content: space-between; isolation: isolate; background: var(--navy); color: var(--white); }
 .platform-film::before { content: ""; position: absolute; inset: -8%; z-index: -2; background: url("/interview-hero.png") center / cover no-repeat; will-change: transform; animation: platform-film-motion 16s ease-in-out infinite alternate; }
 .platform-film-shade { position: absolute; inset: 0; z-index: -1; background: linear-gradient(180deg, rgba(0,31,66,0.42), rgba(0,31,66,0.72) 55%, rgba(0,31,66,0.96)); }
 .platform-film-brand { display: flex; flex-direction: column; gap: 0.25rem; }
 .platform-film-brand span { color: var(--gold); font-size: var(--type-small); font-weight: 800; letter-spacing: 0.12em; }
 .platform-film-brand strong { color: var(--white); font-size: var(--type-base); }
-.platform-film-copy { max-width: 620px; margin-top: auto; padding-top: 6rem; }
+.platform-film-copy { max-width: 520px; margin-top: auto; padding-top: 3rem; }
 .platform-film-copy h2 { max-width: 580px; margin-top: 0.6rem; color: var(--white); font-size: var(--type-large); line-height: 1.05; }
 .platform-film-copy p { max-width: 560px; margin-top: 1rem; color: #eef4f8; }
-.platform-film-controls { margin-top: 2rem; display: flex; justify-content: space-between; align-items: center; gap: 1rem; }
+.platform-film-controls { margin-top: 1.5rem; display: flex; align-items: center; gap: 1rem; }
 .platform-film-play { min-height: 48px; padding: 0.7rem 1rem; display: inline-flex; align-items: center; gap: 0.7rem; border: 1px solid rgba(255,255,255,0.55); background: rgba(0,31,66,0.72); color: var(--white); font-size: var(--type-small); font-weight: 800; cursor: pointer; }
 .platform-film-play span { width: 1.5rem; color: var(--gold); text-align: center; }
 .platform-film-progress { display: flex; gap: 0.35rem; }
@@ -254,7 +254,7 @@ textarea:focus, input:focus { outline: 2px solid rgba(1, 121, 183, 0.22); border
 @keyframes platform-film-motion { from { transform: scale(1.02) translate3d(-2.5%, 1.5%, 0); } to { transform: scale(1.14) translate3d(3%, -2%, 0); } }
 @media (prefers-reduced-motion: reduce) { .platform-film::before { animation: none; } }
 .profile-card { width: min(640px, 100%); padding: 3rem; border-top: 6px solid var(--gold); background: var(--navy); color: var(--white); box-shadow: var(--shadow); }
-.account-profile-card { width: 100%; padding: 3rem; display: flex; flex-direction: column; justify-content: center; border-top: 6px solid var(--gold); background: var(--white); color: var(--ink); box-shadow: none; }
+.account-profile-card { width: 100%; padding: 2.25rem; display: flex; flex-direction: column; justify-content: center; border-top: 6px solid var(--gold); background: var(--white); color: var(--ink); box-shadow: none; }
 .profile-card h1 { color: var(--white); }
 .profile-card > p { color: #dce6f0; }
 .account-profile-card h1 { color: var(--navy); }
@@ -515,16 +515,16 @@ textarea:focus, input:focus { outline: 2px solid rgba(1, 121, 183, 0.22); border
 .prompt-list, .practice-stage, .transcript-card, .idea-bank, .draft-panel, .conversation-card, .language-panel, .shadow-prompt-list, .library-heading, .community-share, .withdraw-panel { box-shadow: none; }
 
 .brief-home { background: var(--white); }
-.brief-hero { min-height: 640px; padding: 5.5rem max(5vw, calc((100vw - 1320px) / 2)); display: grid; grid-template-columns: minmax(0, 0.9fr) minmax(440px, 1.1fr); gap: 7vw; align-items: center; background: var(--navy); }
+.brief-hero { min-height: 560px; padding: 4.5rem max(5vw, calc((100vw - 1220px) / 2)); display: grid; grid-template-columns: minmax(0, 0.95fr) minmax(420px, 1.05fr); gap: 6vw; align-items: center; background: var(--navy); }
 .brief-hero-copy { color: var(--white); }
 .brief-hero-copy h1 { margin-bottom: 1.4rem; color: var(--white); line-height: 0.98; letter-spacing: -0.055em; }
 .brief-hero-copy h1 span { color: var(--gold); }
 .brief-hero-copy > p { max-width: 520px; color: #dce6f0; }
 .brief-actions { margin-top: 2rem; display: flex; flex-wrap: wrap; align-items: center; gap: 1rem; }
 .brief-actions > span { color: #bfcddd; font-size: var(--type-small); }
-.journey-visual { padding: 1.2rem 1.8rem; background: var(--white); box-shadow: 18px 18px 0 var(--gold); }
+.journey-visual { padding: 1rem 1.5rem; background: var(--white); box-shadow: 14px 14px 0 var(--gold); }
 .journey-kicker { padding: 0.3rem 0 1rem; display: flex; justify-content: space-between; border-bottom: 1px solid var(--line); color: var(--muted); font-size: var(--type-small); font-weight: 800; letter-spacing: 0.08em; }
-.journey-row { min-height: 86px; display: grid; grid-template-columns: 34px 48px 1fr auto; gap: 0.8rem; align-items: center; border-bottom: 1px solid var(--line); transition: padding 160ms ease, color 160ms ease; }
+.journey-row { min-height: 92px; display: grid; grid-template-columns: 34px 48px 1fr auto; gap: 0.8rem; align-items: center; border-bottom: 1px solid var(--line); transition: padding 160ms ease, color 160ms ease; }
 .journey-row:last-child { border-bottom: 0; }
 .journey-row:hover { padding-left: 0.5rem; color: var(--twilight); }
 .journey-number { color: var(--gray); font-size: var(--type-small); font-weight: 800; }
