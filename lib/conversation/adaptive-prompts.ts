@@ -89,7 +89,14 @@ function extractActivity(response: string): string | null {
   return match?.[1]?.trim().replace(/\s+(?:because|since)\s+.*$/i, "") ?? null;
 }
 
-function findConversationAnchor(response: string): ConversationAnchor {
+function mentionsPlace(response: string): boolean {
+  const explicitPlace = /\b(hometown|city|town|village|neighbou?rhood|community|country)\b/i;
+  const locationAction = /\b(?:grew up|live|lived|living|moved)\s+(?:in|near|to|from)\b/i;
+  const personalOrigin = /\b(?:i am|i'm|we are|we're)\s+from\s+(?!school|college|university|work|a program|the program)\b/i;
+  return explicitPlace.test(response) || locationAction.test(response) || personalOrigin.test(response);
+}
+
+function findConversationAnchor(response: string): ConversationAnchor | null {
   const activity = extractActivity(response);
   if (/\b(technology|digital|online|computer|internet|\bai\b)\b/i.test(response)) {
     return {
@@ -119,7 +126,7 @@ function findConversationAnchor(response: string): ConversationAnchor {
       rolePlay: "Imagine a classmate disagrees with how your group project should be organized. Explain your approach and negotiate the next step with me.",
     };
   }
-  if (/\b(hometown|city|town|village|neighbou?rhood|community|country|grew up|from)\b/i.test(response)) {
+  if (mentionsPlace(response)) {
     return {
       topic: "the place you described",
       reference: "You brought the place you come from into the conversation.",
@@ -154,11 +161,7 @@ function findConversationAnchor(response: string): ConversationAnchor {
       rolePlay: "Imagine the same problem affects another person who disagrees with your solution. Explain your reasoning and negotiate with me.",
     };
   }
-  return {
-    topic: "that experience",
-    reference: "I want to stay with the experience you just described.",
-    rolePlay: "Imagine another person sees that situation differently. Explain your view and work toward a solution with me.",
-  };
+  return null;
 }
 
 function answerStudentQuestion(response: string): string {
@@ -183,6 +186,7 @@ export function createConnectedAdaptivePrompt(
   if (stage === "wrap") return createAdaptivePrompt(stage, profile, latestResponse);
   const anchor = findConversationAnchor(latestResponse);
   const answerLead = answerStudentQuestion(latestResponse);
+  if (!anchor) return `${answerLead}${createAdaptivePrompt(stage, profile, latestResponse)}`.replace(/\s+/g, " ").trim();
   const behavior = adaptiveStageBehaviors[profile.currentStage];
   const bridge = profile.currentStage === "Emerging" || profile.currentStage === "Developing" ? "" : vocabularyBridge(latestResponse);
   let prompt: string;
@@ -229,7 +233,7 @@ export function createPersonalizedAdaptiveFollowUp(profile: AdaptiveRubricProfil
     if (behavior.followUpPressure === 3) return `${answerLead}${bridge}Tell me about a specific experience that made your work or studies meaningful.`;
     return `${answerLead}${bridge}How do your current work or studies compare with what you expected, and which trade-off has been most important?`;
   }
-  if (/\b(from|grew up|live in|moved|city|country|home)\b/i.test(normalized)) {
+  if (mentionsPlace(latestResponse)) {
     if (behavior.followUpPressure <= 2) return `${answerLead}How has the place you come from influenced you?`;
     if (behavior.followUpPressure === 3) return `${answerLead}${bridge}Give me an example of how that place has influenced a choice you made.`;
     return `${answerLead}${bridge}Which part of that influence would you preserve, and which part would you reconsider?`;

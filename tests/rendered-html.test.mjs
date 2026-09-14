@@ -453,6 +453,41 @@ test("checks whether the learner answered before advancing", async () => {
   assert.doesNotMatch(answered.turns[1].text, /great|wonderful|excellent/i);
 });
 
+test("grounds place follow-ups in geographic evidence from the learner", async () => {
+  const worker = await loadWorker("grounded-place-follow-up");
+  const start = async (name) => {
+    const response = await worker.fetch(new Request("http://localhost/api/practice", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ action: "start", languagePackId: "lang_en_us_v1", participantName: name }),
+    }), runtimeEnv, runtimeContext);
+    return response.json();
+  };
+  const respond = async (session, text) => {
+    const response = await worker.fetch(new Request("http://localhost/api/practice", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ action: "respond", sessionId: session.snapshot.sessionId, storageMode: session.storageMode, text }),
+    }), runtimeEnv, runtimeContext);
+    return response.json();
+  };
+
+  const educationSession = await start("Jordan");
+  const educationReply = await respond(
+    educationSession,
+    "I graduated from ASU last year, and I enjoy taking photographs and meeting new people on weekends.",
+  );
+  assert.match(educationReply.turns[1].text, /activity|enjoyed|valuable/i);
+  assert.doesNotMatch(educationReply.turns[1].text, /that place|place you come from|place has influenced|hometown/i);
+
+  const placeSession = await start("Tariro");
+  const placeReply = await respond(
+    placeSession,
+    "I am from Zimbabwe, and I grew up in Harare. The city and its community shaped many of my values.",
+  );
+  assert.match(placeReply.turns[1].text, /place|influenced|preserve/i);
+});
+
 test("moves through connected OPI-style stages using the learner's latest topic", async () => {
   const worker = await loadWorker("opi-stage-flow");
   const startResponse = await worker.fetch(new Request("http://localhost/api/practice", {
