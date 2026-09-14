@@ -105,7 +105,7 @@ export default function PracticePage() {
   const [recordedBlob, setRecordedBlob] = useState<Blob | null>(null);
   const [recordedPreviewUrl, setRecordedPreviewUrl] = useState("");
   const [voiceDetected, setVoiceDetected] = useState(false);
-  const [voiceNotice, setVoiceNotice] = useState("Press the microphone and answer aloud. Your words will appear below.");
+  const [voiceNotice, setVoiceNotice] = useState("Recording starts automatically after the preparation countdown.");
   const [playbackUrls, setPlaybackUrls] = useState<Record<string, string>>({});
   const [countdown, setCountdown] = useState<number | null>(null);
   const [practiceMinutes, setPracticeMinutes] = useState(5);
@@ -267,7 +267,7 @@ export default function PracticePage() {
     setRecordedPreviewUrl("");
     setRecordingSeconds(0);
     setVoiceDetected(false);
-    setVoiceNotice("Press the microphone and answer aloud. Your words will appear below.");
+    setVoiceNotice("Recording starts automatically after the preparation countdown.");
   }
 
   function playCompletionClap() {
@@ -305,28 +305,14 @@ export default function PracticePage() {
     }
   }
 
-  async function cueStudentTurn() {
-    setCanRecord(false);
-    try {
-      const context = completionAudioContext.current && completionAudioContext.current.state !== "closed"
-        ? completionAudioContext.current
-        : new AudioContext();
-      completionAudioContext.current = context;
-      if (context.state === "suspended") await context.resume();
-      const oscillator = context.createOscillator();
-      const gain = context.createGain();
-      oscillator.type = "sine";
-      oscillator.frequency.setValueAtTime(880, context.currentTime);
-      gain.gain.setValueAtTime(0.0001, context.currentTime);
-      gain.gain.exponentialRampToValueAtTime(0.16, context.currentTime + 0.02);
-      gain.gain.exponentialRampToValueAtTime(0.0001, context.currentTime + 0.18);
-      oscillator.connect(gain).connect(context.destination);
-      oscillator.start(context.currentTime);
-      oscillator.stop(context.currentTime + 0.19);
-      window.setTimeout(() => setCanRecord(true), 220);
-    } catch {
-      setCanRecord(true);
-    }
+  function cueStudentTurn() {
+    clearRecording();
+    updateResponse("");
+    setError("");
+    setCanRecord(true);
+    preparationTriggered.current = false;
+    preparationCancelled.current = false;
+    setPreparationSeconds(30);
   }
 
   async function playRecordingStartBeep() {
@@ -393,16 +379,6 @@ export default function PracticePage() {
   function updateResponse(value: string) {
     transcriptText.current = value;
     setResponse(value);
-  }
-
-  function prepareToRecord() {
-    if (!canRecord || isMayaSpeaking || preparationSeconds !== null) return;
-    clearRecording();
-    updateResponse("");
-    setError("");
-    preparationTriggered.current = false;
-    preparationCancelled.current = false;
-    setPreparationSeconds(30);
   }
 
   async function startRecording() {
@@ -899,13 +875,13 @@ export default function PracticePage() {
                 <div><strong>{turnState.title}</strong><p>{turnState.detail}</p></div>
               </div>
               <div className={isRecording ? "voice-capture voice-first-capture recording" : preparationSeconds !== null ? "voice-capture voice-first-capture preparing" : "voice-capture voice-first-capture"}>
-                <button type="button" className={isRecording ? "record-button active" : "record-button"} onClick={isRecording ? stopRecording : prepareToRecord} disabled={busy || isMayaSpeaking || preparationSeconds !== null || (!canRecord && !isRecording) || (timeExpired && !isRecording)}>
+                <button type="button" className={isRecording ? "record-button active" : "record-button"} onClick={isRecording ? stopRecording : undefined} disabled={!isRecording || busy}>
                   <span className="microphone-mark" aria-hidden="true">{isRecording ? "■" : "●"}</span>
-                  <span>{isRecording ? "Stop recording" : preparationSeconds !== null ? `Starting in ${preparationSeconds}` : !canRecord ? "Wait for the beep" : recordedBlob ? "Record again" : "Start recording"}</span>
+                  <span>{isRecording ? "Stop recording" : preparationSeconds !== null ? `Starting in ${preparationSeconds}` : recordedBlob ? "Recording stopped" : "Waiting for Maya"}</span>
                 </button>
                 {preparationSeconds !== null && <div className="recording-preparation" role="timer" aria-live="assertive"><strong>{preparationSeconds}</strong><span>Prepare your answer<small>Recording begins after the beep.</small></span></div>}
                 {isRecording && <div className="recording-time"><span className="recording-wave" aria-hidden="true"><i /><i /><i /><i /></span><strong>{String(Math.floor(recordingSeconds / 60)).padStart(2, "0")}:{String(recordingSeconds % 60).padStart(2, "0")}</strong></div>}
-                {recordedPreviewUrl && !isRecording && <><div className="voice-preview"><audio controls src={recordedPreviewUrl} /><button type="button" onClick={clearRecording}>Remove</button></div><label className="save-voice-toggle"><input type="checkbox" checked={recordingConsent} onChange={(event) => setRecordingConsent(event.target.checked)} /><span>Keep my voice recording for replay</span></label></>}
+                {recordedPreviewUrl && !isRecording && <><div className="voice-preview"><audio controls src={recordedPreviewUrl} /></div><label className="save-voice-toggle"><input type="checkbox" checked={recordingConsent} onChange={(event) => setRecordingConsent(event.target.checked)} /><span>Keep my voice recording for replay</span></label></>}
               </div>
               {response.trim() && <div id="practice-response" className="transcript-preview" role="status" aria-live="polite"><span>What Maya heard</span><p>{response}</p></div>}
               {recordedBlob && voiceDetected && !response.trim() && <div id="practice-response" className="transcript-preview quiet" role="status"><span>Transcript unavailable</span><p>Your voice is recorded. Maya may ask you to repeat if the words cannot be understood.</p></div>}
