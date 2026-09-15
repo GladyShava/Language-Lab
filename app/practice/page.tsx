@@ -132,6 +132,7 @@ export default function PracticePage() {
   const completionAudioContext = useRef<AudioContext | null>(null);
   const preparationTriggered = useRef(false);
   const preparationCancelled = useRef(false);
+  const autoSendPending = useRef(false);
 
   const selectedPack = languagePacks.find((definition) => definition.pack.id === selectedPackId) ?? languagePacks[0];
   const answerCount = snapshot?.turns.filter((turn) => turn.role === "learner").length ?? 0;
@@ -139,7 +140,9 @@ export default function PracticePage() {
   const currentStageKey = completed ? "wrap" : selectInterviewStage({ plannedDurationMinutes: practiceMinutes, remainingSeconds }, answerCount);
   const conversationStageIndex = Math.max(0, conversationStageKeys.indexOf(currentStageKey));
   const conversationStages = conversationStageKeys.map((stage) => stageLabels[stage]);
-  const turnState = preparationSeconds !== null
+  const turnState = busy && recordedBlob
+    ? { label: "Sending", title: "Sending your response", detail: "Maya will continue when your recording is saved." }
+    : preparationSeconds !== null
     ? { label: "Prepare", title: `Recording starts in ${preparationSeconds} seconds`, detail: "Think about your answer. Begin speaking after the beep." }
     : !canRecord && !recordedBlob
     ? { label: "Listen", title: isMayaSpeaking ? "Maya is speaking" : "Wait for the beep", detail: "Recording will unlock when Maya finishes her question." }
@@ -199,6 +202,15 @@ export default function PracticePage() {
     const timer = window.setInterval(() => setRecordingSeconds(Math.floor((Date.now() - recordingStartedAt.current) / 1000)), 500);
     return () => window.clearInterval(timer);
   }, [isRecording]);
+  useEffect(() => {
+    if (!autoSendPending.current || !recordedBlob || recordingFinalizing || isRecording || busy) return;
+    const timer = window.setTimeout(() => {
+      if (!autoSendPending.current) return;
+      autoSendPending.current = false;
+      void submitResponse();
+    }, 350);
+    return () => window.clearTimeout(timer);
+  }, [recordedBlob, recordingFinalizing, isRecording, busy, response]);
   useEffect(() => {
     if (preparationSeconds === null) return;
     if (timeExpired) {
@@ -261,6 +273,7 @@ export default function PracticePage() {
   }, [countdown, snapshot, mayaVoiceMode]);
 
   function clearRecording() {
+    autoSendPending.current = false;
     if (recordedPreviewUrl) URL.revokeObjectURL(recordedPreviewUrl);
     setRecordingFinalizing(false);
     setRecordedBlob(null);
@@ -448,6 +461,7 @@ export default function PracticePage() {
   function stopRecording() {
     speechRecognition.current?.stop();
     if (mediaRecorder.current?.state === "recording") {
+      autoSendPending.current = true;
       setRecordingFinalizing(true);
       mediaRecorder.current.stop();
     }
@@ -461,10 +475,8 @@ export default function PracticePage() {
     const detected = Boolean(transcriptText.current.trim()) || voicedSamples.current >= 3;
     setVoiceDetected(detected);
     setVoiceNotice(detected
-      ? transcriptText.current.trim()
-        ? "Recording ready. Replay it if you wish, then send your spoken answer."
-        : "Speech detected, but an automatic transcript is unavailable. You may record again for clearer recognition."
-      : "No speech was detected. Record again and answer Maya’s question aloud.");
+      ? "Recording complete. Your response is being sent automatically."
+      : "Recording complete. Maya may ask you to repeat if no speech can be understood.");
   }
 
   function replayTurn(turn: ConversationTurn) {
@@ -564,9 +576,8 @@ export default function PracticePage() {
     finally { setBusy(false); }
   }
 
-  async function sendResponse(event: FormEvent) {
-    event.preventDefault();
-    if (!snapshot || !recordedBlob || !voiceDetected || busy || isRecording) return;
+  async function submitResponse() {
+    if (!snapshot || !recordedBlob || busy || isRecording || recordingFinalizing) return;
     const learnerText = response.trim() || "[Spoken response recorded. Automatic transcript unavailable.]";
     updateResponse(""); setBusy(true); setCanRecord(false); setError("");
     try {
@@ -606,6 +617,12 @@ export default function PracticePage() {
       }
     } catch (caught) { updateResponse(learnerText); setCanRecord(true); setError(caught instanceof Error ? caught.message : "Could not save your response."); }
     finally { setBusy(false); }
+  }
+
+  async function sendResponse(event: FormEvent) {
+    event.preventDefault();
+    autoSendPending.current = false;
+    await submitResponse();
   }
 
   async function finishPractice() {
@@ -877,15 +894,16 @@ export default function PracticePage() {
               <div className={isRecording ? "voice-capture voice-first-capture recording" : preparationSeconds !== null ? "voice-capture voice-first-capture preparing" : "voice-capture voice-first-capture"}>
                 <button type="button" className={isRecording ? "record-button active" : "record-button"} onClick={isRecording ? stopRecording : undefined} disabled={!isRecording || busy}>
                   <span className="microphone-mark" aria-hidden="true">{isRecording ? "■" : "●"}</span>
-                  <span>{isRecording ? "Stop recording" : preparationSeconds !== null ? `Starting in ${preparationSeconds}` : recordedBlob ? "Recording stopped" : "Waiting for Maya"}</span>
+                  <span>{isRecording ? "Stop recording" : preparationSeconds !== null ? `Starting in ${preparationSeconds}` : recordedBlob ? "Sending response" : "Waiting for Maya"}</span>
                 </button>
                 {preparationSeconds !== null && <div className="recording-preparation" role="timer" aria-live="assertive"><strong>{preparationSeconds}</strong><span>Prepare your answer<small>Recording begins after the beep.</small></span></div>}
                 {isRecording && <div className="recording-time"><span className="recording-wave" aria-hidden="true"><i /><i /><i /><i /></span><strong>{String(Math.floor(recordingSeconds / 60)).padStart(2, "0")}:{String(recordingSeconds % 60).padStart(2, "0")}</strong></div>}
-                {recordedPreviewUrl && !isRecording && <><div className="voice-preview"><audio controls src={recordedPreviewUrl} /></div><label className="save-voice-toggle"><input type="checkbox" checked={recordingConsent} onChange={(event) => setRecordingConsent(event.target.checked)} /><span>Keep my voice recording for replay</span></label></>}
+                {recordedPreviewUrl && !isRecording && <div className="voice-preview"><audio controls src={recordedPreviewUrl} /></div>}
+                <label className="save-voice-toggle"><input type="checkbox" checked={recordingConsent} onChange={(event) => setRecordingConsent(event.target.checked)} disabled={busy} /><span>Keep my voice recording for replay</span></label>
               </div>
               {response.trim() && <div id="practice-response" className="transcript-preview" role="status" aria-live="polite"><span>What Maya heard</span><p>{response}</p></div>}
               {recordedBlob && voiceDetected && !response.trim() && <div id="practice-response" className="transcript-preview quiet" role="status"><span>Transcript unavailable</span><p>Your voice is recorded. Maya may ask you to repeat if the words cannot be understood.</p></div>}
-              <div className="composer-footer"><button type="button" className="finish-link" onClick={finishPractice} disabled={busy || isRecording || preparationSeconds !== null || recordingFinalizing}>Finish interview</button><button type="submit" className="button button-gold" disabled={busy || isRecording || preparationSeconds !== null || recordingFinalizing || !recordedBlob || !voiceDetected}>{busy ? "Sending..." : timeExpired ? "Save final answer →" : "Send answer →"}</button></div>
+              <div className="composer-footer"><button type="button" className="finish-link" onClick={finishPractice} disabled={busy || isRecording || preparationSeconds !== null || recordingFinalizing}>Finish interview</button><button type="submit" className="button button-gold" disabled={busy || isRecording || preparationSeconds !== null || recordingFinalizing || !recordedBlob}>{busy ? "Sending..." : "Retry sending →"}</button></div>
             </form>
           )}
           {error && <p className="form-error conversation-error" role="alert">{error}</p>}
