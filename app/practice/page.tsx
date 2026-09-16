@@ -325,7 +325,7 @@ export default function PracticePage() {
     setCanRecord(true);
     preparationTriggered.current = false;
     preparationCancelled.current = false;
-    setPreparationSeconds(30);
+    setPreparationSeconds(10);
   }
 
   async function playRecordingStartBeep() {
