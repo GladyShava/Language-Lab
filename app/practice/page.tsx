@@ -700,7 +700,7 @@ export default function PracticePage() {
               {authMode === "create" && <label htmlFor="native-language"><span>Native language</span><input id="native-language" value={nativeLanguage} onChange={(event) => setNativeLanguage(event.target.value)} maxLength={60} placeholder="For example, Shona" autoComplete="language" /></label>}
               {authMode === "create" && <label className="profile-field-wide" htmlFor="opi-language"><span>Language you are taking the OPI in</span><select id="opi-language" value={targetLanguagePackId} onChange={(event) => setTargetLanguagePackId(event.target.value)}>{languagePacks.map((definition) => <option key={definition.pack.id} value={definition.pack.id}>{definition.pack.displayName} · {definition.pack.nativeName}</option>)}</select><small>Maya’s prompts, speech recognition, and fluent example will use this language.</small></label>}
             </div>
-            <button className="button button-gold" disabled={busy || !asuEmail.trim() || password.length < 8 || (authMode === "create" && (!preferredFirstName.trim() || !surname.trim() || !classCohort.trim() || !nativeLanguage.trim() || !targetLanguagePackId))}>{busy ? authMode === "create" ? "Creating account..." : "Signing in..." : authMode === "create" ? "Create account ->" : "Sign in ->"}</button>
+            <button className="button button-gold" disabled={busy || !asuEmail.trim() || password.length < 8 || (authMode === "create" && (!preferredFirstName.trim() || !surname.trim() || !classCohort.trim() || !nativeLanguage.trim() || !targetLanguagePackId))}>{busy ? authMode === "create" ? "Creating account..." : "Signing in..." : authMode === "create" ? "Create account" : "Sign in"}</button>
           </form>
           {authMode === "sign-in" && (
             <aside className="demo-access" aria-label="Demo account">
@@ -736,7 +736,7 @@ export default function PracticePage() {
               {authMode === "create" ? "Sign in" : "Create account"}
             </button>
           </div>
-          <small className="profile-note">Passwords are stored as salted hashes · Production can later connect ASU single sign-on.</small>
+          <small className="profile-note">Your password is securely protected and never displayed.</small>
           </section>
         </div>
       </main>
@@ -792,7 +792,7 @@ export default function PracticePage() {
               <small>Choose between 1 and 20 minutes.</small>
             </label>
             <div className="ready-start-actions">
-              <button className="button button-gold" onClick={startPractice} disabled={busy}>{busy ? "Preparing..." : "Start interview ->"}</button>
+              <button className="button button-gold" onClick={startPractice} disabled={busy}>{busy ? "Preparing..." : "Start interview"}</button>
             </div>
           </div>
           <figure className="interview-hero-visual" role="img" aria-label="Two graduate students practicing an oral interview in Thunderbird's global campus space">
@@ -870,7 +870,7 @@ export default function PracticePage() {
             <div className="conversation-complete" role="status" aria-live="polite">
               <div className="completion-celebration" aria-hidden="true"><span>👏</span><span>👏</span></div>
               <div className="completion-copy"><span className="completion-label">Interview complete</span><strong>You completed your practice interview.</strong><p>Your personalized coaching feedback, transcript, and saved voice recordings are ready.</p></div>
-              <div className="completion-actions"><a className="button button-gold" href={`/api/practice/report?sessionId=${snapshot.sessionId}&mode=${storageMode}`} download>Download my feedback report</a><Link className="button button-quiet" href={`/transcript?sessionId=${snapshot.sessionId}&mode=${storageMode}`}>Review conversation -&gt;</Link></div>
+              <div className="completion-actions"><a className="button button-gold" href={`/api/practice/report?sessionId=${snapshot.sessionId}&mode=${storageMode}`} download>Download my feedback report</a><Link className="button button-quiet" href={`/transcript?sessionId=${snapshot.sessionId}&mode=${storageMode}`}>Review conversation</Link></div>
             </div>
           ) : (
             <form className="response-composer" onSubmit={sendResponse}>
@@ -891,7 +891,7 @@ export default function PracticePage() {
               </div>
               {response.trim() && <div id="practice-response" className="transcript-preview" role="status" aria-live="polite"><span>What Maya heard</span><p>{response}</p></div>}
               {recordedBlob && voiceDetected && !response.trim() && <div id="practice-response" className="transcript-preview quiet" role="status"><span>Transcript unavailable</span><p>Your voice is recorded. Maya may ask you to repeat if the words cannot be understood.</p></div>}
-              <div className="composer-footer"><button type="button" className="finish-link" onClick={finishPractice} disabled={busy || isRecording || preparationSeconds !== null || recordingFinalizing}>Finish interview</button><button type="submit" className="button button-gold" disabled={busy || isRecording || preparationSeconds !== null || recordingFinalizing || !recordedBlob}>{busy ? "Sending..." : "Retry sending →"}</button></div>
+              <div className="composer-footer"><button type="button" className="finish-link" onClick={finishPractice} disabled={busy || isRecording || preparationSeconds !== null || recordingFinalizing}>Finish interview</button><button type="submit" className="button button-gold" disabled={busy || isRecording || preparationSeconds !== null || recordingFinalizing || !recordedBlob}>{busy ? "Sending..." : "Retry sending"}</button></div>
             </form>
           )}
           {error && <p className="form-error conversation-error" role="alert">{error}</p>}

@@ -155,7 +155,7 @@ export default function TranscriptPage() {
     <main className="workspace-page transcript-page">
       <div className="workspace-heading">
         <div><span className="eyebrow">TRANSCRIPT / REPLAY - {languagePack.pack.displayName}</span><h1>{loadedSession ? sessionTitle : "Your practice conversation"}</h1></div>
-        <div className="button-row">{reportHref && <a href={reportHref} className="button button-quiet">Download PDF report</a>}<Link href={communityHref} className="button button-quiet">Share anonymously (optional)</Link><Link href="/shadow" className="button button-gold">Hear a fluent example →</Link></div>
+        <div className="button-row">{reportHref && <a href={reportHref} className="button button-quiet">Download PDF report</a>}<Link href={communityHref} className="button button-quiet">Share anonymously (optional)</Link><Link href="/shadow" className="button button-gold">Hear a fluent example</Link></div>
       </div>
 
       {loadNote && <p className="transcript-notice" role="status">{loadNote}</p>}
