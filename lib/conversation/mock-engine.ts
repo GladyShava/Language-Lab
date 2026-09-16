@@ -3,6 +3,7 @@ import { adjustInterviewStage, createAdaptivePrompt, createConnectedAdaptiveProm
 import { evaluateAdaptiveConversation } from "./adaptive-rubric";
 import { assessResponse, countAnsweredResponses, createRepairResponse } from "./response-assessment";
 import { getLocalizedInterviewScript } from "./interview-scripts";
+import { selectQuestionBankPrompt } from "./question-bank";
 import { selectInterviewStage, type InterviewStage } from "./time-plan";
 import { analyzeResponseLanguageUse, createTargetLanguageRedirect } from "./target-language";
 
@@ -51,9 +52,10 @@ const alternatePrompts: Record<InterviewStage, readonly string[]> = {
   ],
 };
 
-function chooseUnaskedPrompt(candidates: readonly string[], coachTurns: readonly string[]): string {
+function chooseUnaskedPrompt(candidates: readonly (string | null | undefined)[], coachTurns: readonly string[]): string {
   const asked = new Set(coachTurns.map(normalizePrompt));
-  return candidates.find((candidate) => !asked.has(normalizePrompt(candidate))) ?? candidates.at(-1) ?? "What would you like to talk about next?";
+  return candidates.find((candidate): candidate is string => Boolean(candidate && !asked.has(normalizePrompt(candidate))))
+    ?? `Let’s move to a different topic. What is one experience you would like to describe today?`;
 }
 
 export class MockConversationProvider implements ConversationProvider {
@@ -103,7 +105,18 @@ export class MockConversationProvider implements ConversationProvider {
     } else {
       nextPrompt = createConnectedAdaptivePrompt(plannedStage, profile, latest);
     }
-    return chooseUnaskedPrompt([nextPrompt, createAdaptivePrompt(plannedStage, profile, latest), ...alternatePrompts[plannedStage]], coachTurns);
+    const bankPrompt = selectQuestionBankPrompt({
+      adaptiveStage: profile.currentStage,
+      interviewStage: plannedStage,
+      askedPrompts: coachTurns,
+      turnNumber,
+    });
+    return chooseUnaskedPrompt(
+      turnNumber < 6
+        ? [nextPrompt, bankPrompt, createAdaptivePrompt(plannedStage, profile, latest), ...alternatePrompts[plannedStage]]
+        : [bankPrompt, nextPrompt, createAdaptivePrompt(plannedStage, profile, latest), ...alternatePrompts[plannedStage]],
+      coachTurns,
+    );
   }
 
   async createClosingTurn(context: ConversationContext): Promise<string> {

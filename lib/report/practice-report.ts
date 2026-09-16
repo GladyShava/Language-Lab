@@ -188,20 +188,6 @@ export async function createPracticeReport(input: PracticeReportInput): Promise<
   y -= 4;
   drawWrapped("This is a practice record, not a score, official evaluation, proficiency label or readiness decision.", { size: 9, color: muted });
 
-  section("Conversation transcript");
-  for (const turn of turns) {
-    const elapsed = Math.max(0, Math.round((new Date(turn.occurredAt).getTime() - startedAt.getTime()) / 1000));
-    const time = `${String(Math.floor(elapsed / 60)).padStart(2, "0")}:${String(elapsed % 60).padStart(2, "0")}`;
-    const speaker = turn.role === "coach" ? "MAYA" : "YOU";
-    const text = turn.text.startsWith("[Spoken response recorded") ? "Spoken response recorded. Automatic transcript unavailable." : turn.text;
-    const lines = wrapText(text, regular, 10, contentWidth - 58);
-    ensureSpace(28 + lines.length * 14);
-    page.drawText(`${time}  ${speaker}`, { x: margin, y, size: 9, font: bold, color: turn.role === "coach" ? navy : rgb(128 / 255, 91 / 255, 0) });
-    y -= 16;
-    drawLines(lines, { size: 10, indent: 16, color: ink });
-    y -= 8;
-  }
-
   section("Suggested next practice");
   drawWrapped(rubricProfile.recommendation || nextPracticeFocus(turns), { size: 11 });
   y -= 8;

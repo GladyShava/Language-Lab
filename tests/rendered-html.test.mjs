@@ -528,8 +528,9 @@ test("moves through connected OPI-style stages using the learner's latest topic"
   assert.match(followUps[2], /place|hometown|event/i);
   assert.match(followUps[3], /travel|trip|trade-off|broader lesson/i);
   assert.match(followUps[4], /technology|AI tool|school|workplace/i);
-  assert.match(followUps[5], /weekend/i);
+  assert.match(followUps[5], /education policy|challenge|decision|strategy|ethical/i);
   assert.ok(followUps.slice(1, 5).every((prompt) => /You (connected|described|mentioned|brought|raised)|I want to stay/i.test(prompt)));
+  assert.equal(new Set(followUps).size, followUps.length);
   assert.doesNotMatch(followUps.join(" "), /score|pass|fail|proficiency level|fluent enough/i);
 
   const completeResponse = await worker.fetch(new Request("http://localhost/api/practice", {
@@ -614,9 +615,28 @@ test("uses the selected duration to reach a natural wind-down", async () => {
     }),
   }), runtimeEnv, runtimeContext);
   assert.equal(secondResponse.status, 200);
-  const windingDown = await secondResponse.json();
-  assert.match(windingDown.turns[1].text, /weekend|finish/i);
-  assert.doesNotMatch(windingDown.turns[1].text, /score|pass|fail|proficiency/i);
+  const stillConversing = await secondResponse.json();
+  assert.doesNotMatch(stillConversing.turns[1].text, /score|pass|fail|proficiency/i);
+
+  const finalAnswerResponse = await worker.fetch(new Request("http://localhost/api/practice", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      action: "respond",
+      sessionId: started.snapshot.sessionId,
+      storageMode: started.storageMode,
+      text: "My final answer is that international teamwork helps me compare perspectives and explain decisions more clearly.",
+      practiceMinutes: 2,
+      remainingSeconds: 0,
+      completeAfterResponse: true,
+    }),
+  }), runtimeEnv, runtimeContext);
+  assert.equal(finalAnswerResponse.status, 200);
+  const completed = await finalAnswerResponse.json();
+  assert.equal(completed.completed, true);
+  assert.equal(completed.turns[0].role, "learner");
+  assert.equal(completed.turns[1].role, "coach");
+  assert.match(completed.turns[1].text, /thank you|saved|review/i);
 });
 
 test("progresses the adaptive coaching stage one step at a time", async () => {

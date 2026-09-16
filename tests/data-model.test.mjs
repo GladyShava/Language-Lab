@@ -63,3 +63,14 @@ test("student accounts use a unique ASU email and hashed password fields", async
   assert.match(schema, /passwordSalt: text\("password_salt"\)/);
   assert.match(schema, /student_profiles_asu_email_idx/);
 });
+
+test("builds a unique 2,000-question Maya bank and keeps the PDF feedback-only", async () => {
+  const [bank, report] = await Promise.all([
+    readFile(new URL("lib/conversation/question-bank.ts", root), "utf8"),
+    readFile(new URL("lib/report/practice-report.ts", root), "utf8"),
+  ]);
+  assert.match(bank, /conversationQuestionBank\.length !== 2000/);
+  assert.match(bank, /new Set\(conversationQuestionBank/);
+  assert.doesNotMatch(report, /section\("Conversation transcript"\)/);
+  assert.match(report, /section\("Adaptive coaching profile"\)/);
+});

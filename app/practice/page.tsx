@@ -213,11 +213,6 @@ export default function PracticePage() {
   }, [recordedBlob, recordingFinalizing, isRecording, busy, response]);
   useEffect(() => {
     if (preparationSeconds === null) return;
-    if (timeExpired) {
-      preparationCancelled.current = true;
-      const timer = window.setTimeout(() => setPreparationSeconds(null), 0);
-      return () => window.clearTimeout(timer);
-    }
     if (preparationSeconds > 0) {
       const timer = window.setTimeout(() => setPreparationSeconds((current) => current === null ? null : current - 1), 1000);
       return () => window.clearTimeout(timer);
@@ -228,7 +223,7 @@ export default function PracticePage() {
       setPreparationSeconds(null);
       if (!preparationCancelled.current) void startRecording();
     });
-  }, [preparationSeconds, timeExpired]);
+  }, [preparationSeconds]);
   useEffect(() => {
     if (!snapshot || completed || countdown !== null || timeExpired) return;
     const timer = window.setInterval(() => {
@@ -242,13 +237,6 @@ export default function PracticePage() {
     }, 1000);
     return () => window.clearInterval(timer);
   }, [snapshot, completed, countdown, timeExpired]);
-  useEffect(() => {
-    if (timeExpired && isRecording) stopRecording();
-  }, [timeExpired, isRecording]);
-  useEffect(() => {
-    if (!timeExpired || !snapshot || completed || busy || isRecording || preparationSeconds !== null || recordingFinalizing || recordedBlob) return;
-    void finishPractice();
-  }, [timeExpired, snapshot, completed, busy, isRecording, preparationSeconds, recordingFinalizing, recordedBlob]);
   useEffect(() => () => {
     speechRecognition.current?.stop();
     mediaStream.current?.getTracks().forEach((track) => track.stop());
@@ -886,7 +874,7 @@ export default function PracticePage() {
             </div>
           ) : (
             <form className="response-composer" onSubmit={sendResponse}>
-              {timeExpired && <div className="time-limit-notice" role="status"><strong>Practice time complete</strong><span>Finish and save your current answer, or open your transcript.</span></div>}
+              {timeExpired && <div className="time-limit-notice" role="status"><strong>Practice time complete</strong><span>Finish your current answer. Maya will close the interview after it is sent.</span></div>}
               <div className="turn-panel-heading" aria-live="polite">
                 <span className={recordedBlob && !voiceDetected ? "turn-state attention" : "turn-state"}>{turnState.label}</span>
                 <div><strong>{turnState.title}</strong><p>{turnState.detail}</p></div>

@@ -24,7 +24,6 @@ export function selectInterviewStage(timing: ConversationTiming | undefined, ans
   if (remainingSeconds <= wrapWindow) return "wrap";
 
   const activeStages = plan.filter((stage) => stage !== "wrap");
-  if (answeredResponses > activeStages.length) return "wrap";
   const elapsedRatio = 1 - remainingSeconds / totalSeconds;
   const timeIndex = Math.min(activeStages.length - 1, Math.floor((elapsedRatio / 0.9) * activeStages.length));
   const responseIndex = Math.min(activeStages.length - 1, Math.max(0, answeredResponses - 1));
