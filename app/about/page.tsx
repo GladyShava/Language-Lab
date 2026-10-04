@@ -1,0 +1,3 @@
+export default function AboutPage() {
+  return <main className="workspace-page info-page"><section className="info-hero"><span className="eyebrow">ABOUT</span><h1>Conversation practice without the pressure.</h1><p>Beyond Hello is an AI-guided conversation studio developed through the Thunderbird AI Hatchery. It gives learners a focused place to speak, listen, replay, and reflect before a live language conversation.</p></section><section className="info-card"><h2>What this tool is</h2><p>A practice environment for building comfort with spontaneous speaking. It offers descriptive coaching guidance, not an official proficiency rating, certification, pass/fail result, or readiness decision.</p></section></main>;
+}

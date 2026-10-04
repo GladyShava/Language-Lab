@@ -1,30 +1,61 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
 import { FormEvent, useEffect, useRef, useState } from "react";
-import { createInterviewPlan, selectInterviewStage, type InterviewStage } from "@/lib/conversation/time-plan";
 import type { ConversationTurn } from "@/lib/conversation/types";
 import { defaultLanguagePackId, listLanguagePackDefinitions } from "@/lib/language-packs/registry";
 import type { PracticeStorageMode } from "@/lib/practice/store";
 
 const languagePacks = listLanguagePackDefinitions();
-const normalizeLanguagePackId = (value: string): string => languagePacks.find(
-  (definition) => definition.pack.id === value || definition.pack.localeTag === value,
-)?.pack.id ?? defaultLanguagePackId;
-const introScenes = [
-  { title: "Choose a language", detail: "Select the language you want to practice." },
-  { title: "Talk with Maya", detail: "Listen and respond in a natural conversation." },
-  { title: "Replay and review", detail: "Hear your voice and read the conversation transcript." },
+
+const readinessCards = [
+  {
+    title: "Start and listen",
+    description: "Select Start. Maya will ask the first question. Listen until she finishes speaking.",
+  },
+  {
+    title: "Take 10 seconds to prepare",
+    description: "After Maya finishes, a 10-second timer will begin. Use this time to think about your answer.",
+  },
+  {
+    title: "Speak after the beep",
+    description: "When the timer reaches zero, you will hear a beep. Start speaking—recording begins automatically.",
+  },
+  {
+    title: "Send your response",
+    description: "When you finish speaking, select Send Response. Maya will listen and continue the conversation.",
+  },
 ] as const;
-const stageLabels: Record<InterviewStage, string> = {
-  warmup: "Warm-up",
-  description: "Description",
-  story: "Story",
-  opinion: "Opinion",
-  role_play: "Role-play",
-  wrap: "Wrap-up",
-};
+
+const mayaFemaleVoicePattern = /\b(Samantha|Zira|Aria|Jenny|Susan|Hazel|Victoria|Karen|Moira|Fiona|Tessa|Serena|Ava|Allison|Joana|Luciana|Helena|Sabina|Hortense|Hedda|Elsa|Maria|Irina|Heera|Kalpana|Lekha|Ayumi|Haruka|Kyoko|Huihui|Ting-Ting|Mei-Jia|Yuna|Sora|Laura|Monica|Paulina|Amelie|Amélie|Audrey|Julie|Female)\b/i;
+
+async function loadBrowserVoices(): Promise<SpeechSynthesisVoice[]> {
+  const initialVoices = window.speechSynthesis.getVoices();
+  if (initialVoices.length) return initialVoices;
+  await new Promise<void>((resolve) => {
+    const timeout = window.setTimeout(resolve, 300);
+    window.speechSynthesis.addEventListener("voiceschanged", () => {
+      window.clearTimeout(timeout);
+      resolve();
+    }, { once: true });
+  });
+  return window.speechSynthesis.getVoices();
+}
+
+function selectMayaVoice(voices: SpeechSynthesisVoice[], localeTag: string): SpeechSynthesisVoice | null {
+  const normalizedLocale = localeTag.toLowerCase().replaceAll("_", "-");
+  const language = normalizedLocale.split("-")[0];
+  return [...voices].sort((left, right) => {
+    const score = (voice: SpeechSynthesisVoice) => {
+      const voiceLocale = voice.lang.toLowerCase().replaceAll("_", "-");
+      return (mayaFemaleVoicePattern.test(voice.name) ? 100 : 0)
+        + (voiceLocale === normalizedLocale ? 40 : voiceLocale.startsWith(`${language}-`) || voiceLocale === language ? 25 : 0)
+        + (voice.localService ? 4 : 0)
+        + (voice.default ? 1 : 0);
+    };
+    return score(right) - score(left);
+  })[0] ?? null;
+}
 
 interface PracticeSnapshot {
   sessionId: string;
@@ -36,14 +67,9 @@ interface PracticeSnapshot {
   turns: ConversationTurn[];
 }
 
-interface StudentProfile {
-  id: string;
-  asuEmail: string;
-  preferredFirstName: string;
-  surname: string;
-  classCohort: string;
-  nativeLanguage: string;
-  targetLanguagePackId: string;
+interface SessionPracticeIdentity {
+  firstName: string;
+  participantKey: string;
 }
 
 interface SpeechRecognitionResultLike {
@@ -68,6 +94,17 @@ interface SpeechRecognitionLike {
 
 type MayaVoiceMode = "browser" | "text";
 
+type ProcessingStage = "sending-response" | "saving-recording" | "maya-responding" | null;
+
+interface PendingRecordingUpload {
+  id: string;
+  blob: Blob;
+  sessionId: string;
+  messageId: string;
+  durationMs: number;
+  localPlaybackUrl: string;
+}
+
 type SpeechRecognitionConstructor = new () => SpeechRecognitionLike;
 
 declare global {
@@ -78,21 +115,11 @@ declare global {
 }
 
 export default function PracticePage() {
-  const pathname = usePathname();
   const [selectedPackId, setSelectedPackId] = useState<string>(defaultLanguagePackId);
-  const [profile, setProfile] = useState<StudentProfile | null | undefined>(undefined);
-  const [authMode, setAuthMode] = useState<"create" | "sign-in">("sign-in");
-  const [introScene, setIntroScene] = useState(0);
-  const [introSpeaking, setIntroSpeaking] = useState(false);
-  const [introPaused, setIntroPaused] = useState(false);
-  const [introHeard, setIntroHeard] = useState(false);
-  const [asuEmail, setAsuEmail] = useState("");
-  const [password, setPassword] = useState("");
-  const [preferredFirstName, setPreferredFirstName] = useState("");
-  const [surname, setSurname] = useState("");
-  const [classCohort, setClassCohort] = useState("");
-  const [nativeLanguage, setNativeLanguage] = useState("");
-  const [targetLanguagePackId, setTargetLanguagePackId] = useState<string>(defaultLanguagePackId);
+  const [firstName, setFirstName] = useState("");
+  const [setupStep, setSetupStep] = useState<1 | 2 | 3>(1);
+  const [readinessStep, setReadinessStep] = useState(0);
+  const [sessionIdentity, setSessionIdentity] = useState<SessionPracticeIdentity | null>(null);
   const [snapshot, setSnapshot] = useState<PracticeSnapshot | null>(null);
   const [storageMode, setStorageMode] = useState<PracticeStorageMode>("memory");
   const [response, setResponse] = useState("");
@@ -116,7 +143,14 @@ export default function PracticePage() {
   const [canRecord, setCanRecord] = useState(false);
   const [preparationSeconds, setPreparationSeconds] = useState<number | null>(null);
   const [mayaVoiceMode, setMayaVoiceMode] = useState<MayaVoiceMode>("text");
+  const [isQuestionPreview, setIsQuestionPreview] = useState(false);
   const [revealedCoachTurns, setRevealedCoachTurns] = useState<string[]>([]);
+  const [processingStage, setProcessingStage] = useState<ProcessingStage>(null);
+  const [pendingRecordingUploads, setPendingRecordingUploads] = useState<PendingRecordingUpload[]>([]);
+  const [recordingSaveError, setRecordingSaveError] = useState("");
+  const [recordingUploadRetrying, setRecordingUploadRetrying] = useState(false);
+  const [microphoneStarting, setMicrophoneStarting] = useState(false);
+  const [microphoneRetryAvailable, setMicrophoneRetryAvailable] = useState(false);
   const conversationEnd = useRef<HTMLDivElement>(null);
   const mediaRecorder = useRef<MediaRecorder | null>(null);
   const mediaStream = useRef<MediaStream | null>(null);
@@ -127,29 +161,33 @@ export default function PracticePage() {
   const audioContext = useRef<AudioContext | null>(null);
   const voiceCheckTimer = useRef<number | null>(null);
   const voicedSamples = useRef(0);
-  const introAudio = useRef<HTMLAudioElement | null>(null);
   const completionCelebrated = useRef(false);
   const completionAudioContext = useRef<AudioContext | null>(null);
   const preparationTriggered = useRef(false);
   const preparationCancelled = useRef(false);
   const autoSendPending = useRef(false);
+  const submissionLock = useRef(false);
+  const pendingRecordingUploadsRef = useRef<PendingRecordingUpload[]>([]);
 
   const selectedPack = languagePacks.find((definition) => definition.pack.id === selectedPackId) ?? languagePacks[0];
-  const answerCount = snapshot?.turns.filter((turn) => turn.role === "learner").length ?? 0;
-  const conversationStageKeys = createInterviewPlan(practiceMinutes);
-  const currentStageKey = completed ? "wrap" : selectInterviewStage({ plannedDurationMinutes: practiceMinutes, remainingSeconds }, answerCount);
-  const conversationStageIndex = Math.max(0, conversationStageKeys.indexOf(currentStageKey));
-  const conversationStages = conversationStageKeys.map((stage) => stageLabels[stage]);
-  const turnState = busy && recordedBlob
-    ? { label: "Sending", title: "Sending your response", detail: "Maya will continue when your recording is saved." }
+  const turnState = processingStage === "sending-response"
+    ? { label: "Sending", title: "Sending your response", detail: "Your answer is being submitted once. Please wait." }
+    : processingStage === "saving-recording"
+    ? { label: "Saving", title: "Saving your recording", detail: "Your answer is saved. We are attaching your voice for replay." }
+    : processingStage === "maya-responding"
+    ? { label: "Maya is responding", title: "Maya is preparing the next question", detail: "Listen when Maya begins speaking." }
+    : microphoneStarting
+    ? { label: "Connecting", title: "Connecting your microphone", detail: "If your browser asks, allow microphone access to begin recording." }
+    : microphoneRetryAvailable
+    ? { label: "Action needed", title: "Microphone access is needed", detail: "Allow microphone access, then select Try Microphone Again." }
     : preparationSeconds !== null
     ? { label: "Prepare", title: `Recording starts in ${preparationSeconds} seconds`, detail: "Think about your answer. Begin speaking after the beep." }
     : !canRecord && !recordedBlob
     ? { label: "Listen", title: isMayaSpeaking ? "Maya is speaking" : "Wait for the beep", detail: "Recording will unlock when Maya finishes her question." }
     : isRecording
-    ? { label: "Listening", title: "Speak naturally", detail: "Tap Stop recording when you finish your answer." }
+    ? { label: "Listening", title: "Speak naturally", detail: "Select Send Response when you finish your answer." }
     : recordedBlob && voiceDetected
-      ? { label: "Answer ready", title: "Ready to send", detail: voiceNotice }
+      ? { label: "Response ready", title: "Ready to send", detail: voiceNotice }
       : recordedBlob
         ? { label: "Try again", title: "No speech detected", detail: voiceNotice }
     : { label: "Your turn", title: "Answer Maya out loud", detail: "Take your time. You can replay your answer before sending it." };
@@ -161,41 +199,6 @@ export default function PracticePage() {
     void context.close().catch(() => undefined);
   }
 
-  function prepareIntroAudio() {
-    const audio = introAudio.current ?? new Audio("/audio/platform-introduction.mp3");
-    introAudio.current = audio;
-    audio.onplay = () => { setError(""); setIntroPaused(false); setIntroSpeaking(true); };
-    audio.onended = () => {
-      setIntroSpeaking(false);
-      setIntroPaused(false);
-      setIntroHeard(true);
-      window.localStorage.setItem("opi-platform-introduction-heard", "true");
-    };
-    audio.onerror = () => { setIntroSpeaking(false); setError("The introduction recording could not play."); };
-    return audio;
-  }
-
-  useEffect(() => {
-    if (pathname === "/") {
-      setProfile(null);
-      return;
-    }
-    void fetch("/api/profile")
-      .then((request) => request.json() as Promise<{ profile: StudentProfile | null }>)
-      .then((data) => {
-        setProfile(data.profile);
-        if (data.profile) setSelectedPackId(normalizeLanguagePackId(data.profile.targetLanguagePackId));
-      })
-      .catch(() => setProfile(null));
-  }, [pathname]);
-  useEffect(() => {
-    if (profile) return;
-    const timer = window.setTimeout(() => setIntroScene((introScene + 1) % introScenes.length), 4500);
-    return () => window.clearTimeout(timer);
-  }, [introScene, profile]);
-  useEffect(() => {
-    setIntroHeard(window.localStorage.getItem("opi-platform-introduction-heard") === "true");
-  }, []);
   useEffect(() => { conversationEnd.current?.scrollIntoView({ behavior: "smooth", block: "nearest" }); }, [snapshot?.turns.length, busy]);
   useEffect(() => {
     if (!isRecording) return;
@@ -243,11 +246,10 @@ export default function PracticePage() {
     if (voiceCheckTimer.current !== null) window.clearInterval(voiceCheckTimer.current);
     closeRecorderAudioContext();
     window.speechSynthesis?.cancel();
-    introAudio.current?.pause();
-    introAudio.current = null;
     const celebrationContext = completionAudioContext.current;
     completionAudioContext.current = null;
     if (celebrationContext && celebrationContext.state !== "closed") void celebrationContext.close().catch(() => undefined);
+    pendingRecordingUploadsRef.current.forEach((upload) => URL.revokeObjectURL(upload.localPlaybackUrl));
   }, []);
   useEffect(() => {
     if (countdown === null || !snapshot) return;
@@ -259,6 +261,7 @@ export default function PracticePage() {
     }, countdown > 0 ? 1000 : 500);
     return () => window.clearTimeout(timer);
   }, [countdown, snapshot, mayaVoiceMode]);
+  useEffect(() => { pendingRecordingUploadsRef.current = pendingRecordingUploads; }, [pendingRecordingUploads]);
 
   function clearRecording() {
     autoSendPending.current = false;
@@ -350,8 +353,11 @@ export default function PracticePage() {
     }
     window.speechSynthesis.cancel();
     const utterance = new SpeechSynthesisUtterance(text);
-    utterance.lang = localeTag;
+    const mayaVoice = selectMayaVoice(await loadBrowserVoices(), localeTag);
+    utterance.voice = mayaVoice;
+    utterance.lang = mayaVoice?.lang ?? localeTag;
     utterance.rate = 0.94;
+    utterance.pitch = 1.06;
     utterance.onstart = () => setIsMayaSpeaking(true);
     utterance.onend = () => { setIsMayaSpeaking(false); onFinished?.(); };
     utterance.onerror = () => {
@@ -362,21 +368,6 @@ export default function PracticePage() {
     window.speechSynthesis.speak(utterance);
   }
 
-  function playPlatformIntro() {
-    if (introSpeaking) {
-      introAudio.current?.pause();
-      setIntroSpeaking(false);
-      setIntroPaused(true);
-      return;
-    }
-    const audio = prepareIntroAudio();
-    if (audio.ended) audio.currentTime = 0;
-    void audio.play().catch(() => {
-      setIntroSpeaking(false);
-      setError("The introduction recording could not play. Check your device volume and try again.");
-    });
-  }
-
   function updateResponse(value: string) {
     transcriptText.current = value;
     setResponse(value);
@@ -384,7 +375,7 @@ export default function PracticePage() {
 
   async function startRecording() {
     if (!canRecord || isMayaSpeaking) return;
-    setError("");
+    setError(""); setMicrophoneStarting(true); setMicrophoneRetryAvailable(false);
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       voicedSamples.current = 0;
@@ -408,7 +399,12 @@ export default function PracticePage() {
         : MediaRecorder.isTypeSupported("audio/mp4")
           ? "audio/mp4"
           : "";
-      const recorder = mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream);
+      let recorder: MediaRecorder;
+      try {
+        recorder = new MediaRecorder(stream, { ...(mimeType ? { mimeType } : {}), audioBitsPerSecond: 48_000 });
+      } catch {
+        recorder = mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream);
+      }
       audioChunks.current = [];
       recorder.ondataavailable = (event) => { if (event.data.size) audioChunks.current.push(event.data); };
       recorder.onstop = () => {
@@ -441,9 +437,14 @@ export default function PracticePage() {
       } else {
         setVoiceNotice("Automatic transcription is unavailable here. Your recording can still be sent and saved.");
       }
-      recorder.start();
+      recorder.start(1000);
       setIsRecording(true);
-    } catch { setError("Microphone access is unavailable. Allow microphone access to continue this voice practice."); }
+    } catch {
+      setMicrophoneRetryAvailable(true);
+      setError("Microphone access is unavailable. Allow microphone access, then try connecting it again.");
+    } finally {
+      setMicrophoneStarting(false);
+    }
   }
 
   function stopRecording() {
@@ -468,6 +469,7 @@ export default function PracticePage() {
   }
 
   function replayTurn(turn: ConversationTurn) {
+    if (isRecording || busy || recordingFinalizing || isMayaSpeaking) return;
     window.speechSynthesis?.cancel();
     setIsMayaSpeaking(false);
     const audioUrl = playbackUrls[turn.id];
@@ -494,8 +496,87 @@ export default function PracticePage() {
     void speakMayaText(turn.text, snapshot?.localeTag ?? selectedPack.pack.localeTag, onFinished);
   }
 
-  async function startPractice() {
-    if (!profile) { setError("Create your profile before starting the interview."); return; }
+  async function uploadRecording(
+    blob: Blob,
+    sessionId: string,
+    messageId: string,
+    durationMs: number,
+    attempt: number,
+  ): Promise<string> {
+    const diagnostic = { attempt, durationMs, sizeBytes: blob.size, mimeType: blob.type || "unknown" };
+    console.info("[Beyond Hello] Recording upload started", diagnostic);
+    const extension = blob.type.includes("mp4") ? "mp4" : "webm";
+    const form = new FormData();
+    form.set("audio", blob, `response-${messageId}.${extension}`);
+    form.set("sessionId", sessionId);
+    form.set("messageId", messageId);
+    form.set("durationMs", String(durationMs));
+    form.set("consentGranted", "true");
+    form.set("mode", storageMode);
+    form.set("clientUploadId", crypto.randomUUID());
+
+    let upload: Response;
+    try {
+      upload = await fetch("/api/practice/recording", { method: "POST", body: form });
+    } catch (caught) {
+      console.error("[Beyond Hello] Recording upload failed before an HTTP response", { ...diagnostic, failureLocation: "browser-or-network", error: caught instanceof Error ? caught.message : "Unknown network error" });
+      throw new Error("The conversation was saved, but the recording could not reach the server.");
+    }
+
+    const responseText = await upload.text();
+    let audioData: { error?: string; recording?: { playbackUrl: string }; diagnosticId?: string } = {};
+    try { audioData = responseText ? JSON.parse(responseText) as typeof audioData : {}; } catch { /* A hosting layer may return a non-JSON error page. */ }
+    if (!upload.ok || !audioData.recording) {
+      console.error("[Beyond Hello] Recording upload was rejected", { ...diagnostic, failureLocation: "application-or-deployment", httpStatus: upload.status, diagnosticId: audioData.diagnosticId ?? upload.headers.get("x-recording-diagnostic-id") });
+      throw new Error(audioData.error ?? (upload.status === 413
+        ? "The conversation was saved, but this recording was too large for the server."
+        : "The conversation was saved, but its recording could not be stored for replay."));
+    }
+    console.info("[Beyond Hello] Recording upload completed", { ...diagnostic, httpStatus: upload.status, diagnosticId: audioData.diagnosticId ?? upload.headers.get("x-recording-diagnostic-id") });
+    return audioData.recording.playbackUrl;
+  }
+
+  async function uploadRecordingWithRetry(blob: Blob, sessionId: string, messageId: string, durationMs: number): Promise<string> {
+    try {
+      return await uploadRecording(blob, sessionId, messageId, durationMs, 1);
+    } catch {
+      await new Promise((resolve) => window.setTimeout(resolve, 500));
+      return uploadRecording(blob, sessionId, messageId, durationMs, 2);
+    }
+  }
+
+  async function retryPendingRecordings() {
+    if (recordingUploadRetrying || !pendingRecordingUploads.length) return;
+    setRecordingUploadRetrying(true);
+    setRecordingSaveError("");
+    const stillPending: PendingRecordingUpload[] = [];
+    for (const pending of pendingRecordingUploads) {
+      try {
+        const playbackUrl = await uploadRecordingWithRetry(pending.blob, pending.sessionId, pending.messageId, pending.durationMs);
+        setPlaybackUrls((current) => ({ ...current, [pending.messageId]: playbackUrl }));
+        URL.revokeObjectURL(pending.localPlaybackUrl);
+      } catch (caught) {
+        stillPending.push(pending);
+        setRecordingSaveError(caught instanceof Error ? caught.message : "The recording still could not be saved. Your conversation and local recording remain available on this page.");
+      }
+    }
+    setPendingRecordingUploads(stillPending);
+    setRecordingUploadRetrying(false);
+  }
+
+  async function startPractice(mode: "full" | "preview" = "full") {
+    if (!sessionIdentity) { setError("Set up this practice session before starting the interview."); return; }
+    const preview = mode === "preview";
+    setIsQuestionPreview(preview);
+    setCompleted(false);
+    setProcessingStage(null);
+    setMicrophoneStarting(false);
+    setMicrophoneRetryAvailable(false);
+    setCountdown(null);
+    completionCelebrated.current = false;
+    Object.values(playbackUrls).filter((url) => url.startsWith("blob:")).forEach((url) => URL.revokeObjectURL(url));
+    setPlaybackUrls({});
+    clearRecording();
     try {
       const celebrationContext = completionAudioContext.current && completionAudioContext.current.state !== "closed"
         ? completionAudioContext.current
@@ -511,7 +592,7 @@ export default function PracticePage() {
       const request = await fetch("/api/practice", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ action: "start", languagePackId: selectedPackId, participantName: profile.preferredFirstName, participantKey: profile.id, practiceMinutes }),
+        body: JSON.stringify({ action: "start", languagePackId: selectedPackId, participantName: sessionIdentity.firstName, participantKey: sessionIdentity.participantKey, practiceMinutes }),
       });
       const data = await request.json() as { error?: string; snapshot: PracticeSnapshot; storageMode: PracticeStorageMode };
       if (!request.ok) throw new Error(data.error ?? "Could not start practice.");
@@ -526,85 +607,91 @@ export default function PracticePage() {
       setPreparationSeconds(null);
       setRemainingSeconds(practiceMinutes * 60); setTimeExpired(false); setRecordingFinalizing(false);
       setSnapshot(data.snapshot); setStorageMode(data.storageMode); setCompleted(false); setCountdown(3); setError(voiceError);
-      window.localStorage.setItem("opi_last_session", JSON.stringify({ sessionId: data.snapshot.sessionId, mode: data.storageMode }));
+      if (!preview) window.localStorage.setItem("opi_last_session", JSON.stringify({ sessionId: data.snapshot.sessionId, mode: data.storageMode }));
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "Could not start practice.");
     }
     finally { setBusy(false); }
   }
 
-  async function submitAccount(event: FormEvent) {
+  function completeSessionSetup(selectedMinutes = practiceMinutes) {
+    if (busy) return;
+    const sanitizedFirstName = firstName.trim().replace(/[^\p{L}\p{M}' -]/gu, "").split(/\s+/)[0].slice(0, 40);
+    if (!sanitizedFirstName) { setError("Enter the name you would like Maya to use."); return; }
+    setError("");
+    setFirstName(sanitizedFirstName);
+    setPracticeMinutes(selectedMinutes);
+    setRemainingSeconds(selectedMinutes * 60);
+    setReadinessStep(0);
+    setSessionIdentity({ firstName: sanitizedFirstName, participantKey: crypto.randomUUID() });
+  }
+
+  function submitSessionSetup(event: FormEvent) {
     event.preventDefault();
-    const signingIn = authMode === "sign-in";
-    if (!asuEmail.trim() || !password || busy) return;
-    if (!signingIn && (!preferredFirstName.trim() || !surname.trim() || !classCohort.trim() || !nativeLanguage.trim() || !targetLanguagePackId)) return;
-    setBusy(true); setError("");
-    try {
-      const request = await fetch("/api/profile", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          action: signingIn ? "sign_in" : "create",
-          asuEmail,
-          password,
-          preferredFirstName,
-          surname,
-          classCohort,
-          nativeLanguage,
-          targetLanguagePackId,
-        }),
-      });
-      const data = await request.json() as { error?: string; profile?: StudentProfile };
-      if (!request.ok || !data.profile) throw new Error(data.error ?? (signingIn ? "Could not sign in." : "Could not create your profile."));
-      introAudio.current?.pause();
-      introAudio.current = null;
-      setIntroSpeaking(false);
-      setProfile(data.profile); setSelectedPackId(normalizeLanguagePackId(data.profile.targetLanguagePackId)); setPassword("");
-    } catch (caught) { setError(caught instanceof Error ? caught.message : signingIn ? "Could not sign in." : "Could not create your profile."); }
-    finally { setBusy(false); }
+    completeSessionSetup();
+  }
+
+  function advanceSessionSetup(event: FormEvent) {
+    event.preventDefault();
+    if (setupStep === 1) {
+      const sanitizedFirstName = firstName.trim().replace(/[^\p{L}\p{M}' -]/gu, "").split(/\s+/)[0].slice(0, 40);
+      if (!sanitizedFirstName) { setError("Enter the name you would like Maya to use."); return; }
+      setFirstName(sanitizedFirstName);
+    }
+    setError("");
+    setSetupStep((current) => current === 1 ? 2 : 3);
   }
 
   async function submitResponse() {
-    if (!snapshot || !recordedBlob || busy || isRecording || recordingFinalizing) return;
+    if (!snapshot || !recordedBlob || busy || isRecording || recordingFinalizing || submissionLock.current) return;
+    submissionLock.current = true;
+    autoSendPending.current = false;
+    const responseBlob = recordedBlob;
+    const responseDurationMs = recordingSeconds * 1000;
     const learnerText = response.trim() || "[Spoken response recorded. Automatic transcript unavailable.]";
-    updateResponse(""); setBusy(true); setCanRecord(false); setError("");
+    updateResponse(""); setBusy(true); setCanRecord(false); setError(""); setProcessingStage("sending-response");
     try {
       const request = await fetch("/api/practice", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ action: "respond", sessionId: snapshot.sessionId, storageMode, text: response.trim(), hasRecording: true, completeAfterResponse: timeExpired, practiceMinutes, remainingSeconds }),
+        body: JSON.stringify({ action: "respond", sessionId: snapshot.sessionId, storageMode, text: response.trim(), hasRecording: true, completeAfterResponse: timeExpired || isQuestionPreview, practiceMinutes, remainingSeconds }),
       });
       const data = await request.json() as { error?: string; turns: ConversationTurn[]; completed?: boolean };
       if (!request.ok) throw new Error(data.error ?? "Could not save your response.");
       setSnapshot((current) => current ? { ...current, status: data.completed ? "completed" : current.status, turns: [...current.turns, ...data.turns] } : current);
       const coachTurn = data.turns.find((turn) => turn.role === "coach");
-      if (!data.completed) speakCoachTurn(coachTurn, cueStudentTurn);
 
       const learnerTurn = data.turns.find((turn) => turn.role === "learner");
-      if (recordedBlob && learnerTurn && recordingConsent) {
-        const form = new FormData();
-        form.set("audio", recordedBlob, `response-${learnerTurn.id}.webm`);
-        form.set("sessionId", snapshot.sessionId);
-        form.set("messageId", learnerTurn.id);
-        form.set("durationMs", String(recordingSeconds * 1000));
-        form.set("consentGranted", "true");
-        form.set("mode", storageMode);
+      if (learnerTurn && recordingConsent) {
+        setProcessingStage("saving-recording");
         try {
-          const upload = await fetch("/api/practice/recording", { method: "POST", body: form });
-          const audioData = await upload.json() as { error?: string; recording?: { playbackUrl: string } };
-          if (!upload.ok || !audioData.recording) throw new Error(audioData.error ?? "Audio could not be stored.");
-          setPlaybackUrls((current) => ({ ...current, [learnerTurn.id]: audioData.recording!.playbackUrl }));
-        } catch { setError("Your response was saved, but its audio could not be stored for replay."); }
-      } else if (recordedBlob && learnerTurn && recordedPreviewUrl) {
-        setPlaybackUrls((current) => ({ ...current, [learnerTurn.id]: URL.createObjectURL(recordedBlob) }));
+          const playbackUrl = await uploadRecordingWithRetry(responseBlob, snapshot.sessionId, learnerTurn.id, responseDurationMs);
+          setPlaybackUrls((current) => ({ ...current, [learnerTurn.id]: playbackUrl }));
+        } catch (caught) {
+          const localPlaybackUrl = URL.createObjectURL(responseBlob);
+          setPlaybackUrls((current) => ({ ...current, [learnerTurn.id]: localPlaybackUrl }));
+          setPendingRecordingUploads((current) => [...current, { id: crypto.randomUUID(), blob: responseBlob, sessionId: snapshot.sessionId, messageId: learnerTurn.id, durationMs: responseDurationMs, localPlaybackUrl }]);
+          setRecordingSaveError(caught instanceof Error ? caught.message : "Your conversation was saved, but its recording could not be stored for replay.");
+        }
+      } else if (learnerTurn) {
+        setPlaybackUrls((current) => ({ ...current, [learnerTurn.id]: URL.createObjectURL(responseBlob) }));
       }
       clearRecording();
       if (data.completed) {
+        setProcessingStage(null);
         setCompleted(true);
-        speakCoachTurn(coachTurn, playCompletionClap);
+        speakCoachTurn(coachTurn, isQuestionPreview ? undefined : playCompletionClap);
+      } else {
+        setProcessingStage("maya-responding");
+        speakCoachTurn(coachTurn, () => { setProcessingStage(null); cueStudentTurn(); });
       }
-    } catch (caught) { updateResponse(learnerText); setCanRecord(true); setError(caught instanceof Error ? caught.message : "Could not save your response."); }
-    finally { setBusy(false); }
+    } catch (caught) {
+      setProcessingStage(null);
+      updateResponse(learnerText);
+      setCanRecord(true);
+      setError(caught instanceof Error ? `${caught.message} Your recording is still available—select Send Response to try again.` : "Your response could not be sent. Your recording is still available—select Send Response to try again.");
+    }
+    finally { setBusy(false); submissionLock.current = false; }
   }
 
   async function sendResponse(event: FormEvent) {
@@ -631,114 +718,46 @@ export default function PracticePage() {
     finally { setBusy(false); }
   }
 
-  function resetPractice() {
-    window.speechSynthesis?.cancel();
-    setIsMayaSpeaking(false);
-    setCanRecord(false);
-    setPreparationSeconds(null);
-    preparationTriggered.current = false;
-    preparationCancelled.current = true;
-    setMayaVoiceMode("text");
-    speechRecognition.current?.stop();
-    mediaStream.current?.getTracks().forEach((track) => track.stop());
-    if (voiceCheckTimer.current !== null) {
-      window.clearInterval(voiceCheckTimer.current);
-      voiceCheckTimer.current = null;
-    }
-    closeRecorderAudioContext();
-    const celebrationContext = completionAudioContext.current;
-    completionAudioContext.current = null;
-    if (celebrationContext && celebrationContext.state !== "closed") void celebrationContext.close().catch(() => undefined);
-    Object.values(playbackUrls).filter((url) => url.startsWith("blob:")).forEach((url) => URL.revokeObjectURL(url));
-    completionCelebrated.current = false;
-    clearRecording(); setSnapshot(null); setCompleted(false); setPlaybackUrls({}); setCountdown(null); setTimeExpired(false); setRemainingSeconds(practiceMinutes * 60); setRecordingFinalizing(false); setRevealedCoachTurns([]); setError("");
+  function confirmEndConversation() {
+    if (busy || recordingFinalizing || isRecording) return;
+    if (!window.confirm("End this conversation now? Maya will close the session and save the responses you already sent.")) return;
+    void finishPractice();
   }
 
-  if (profile === undefined) {
-    return <main className="workspace-page practice-setup-page"><p className="profile-loading">Opening your practice studio...</p></main>;
-  }
-
-  if (!profile) {
+  if (!sessionIdentity) {
     return (
-      <main className="workspace-page practice-setup-page profile-gate">
-        <div className="profile-gate-layout">
-          <section className={`platform-film platform-film-scene-${introScene + 1}`} aria-label="AI OPI Conversation Studio introduction">
-            <div className="platform-film-shade" />
-            <div className="platform-film-brand"><span>THUNDERBIRD</span><strong>AI OPI CONVERSATION STUDIO</strong></div>
-            <div className="platform-film-copy" aria-live="polite">
-              <span className="eyebrow eyebrow-light">AI-GUIDED PRACTICE</span>
-              <h2>{introScenes[introScene].title}</h2>
-              <p>{introScenes[introScene].detail}</p>
-            </div>
-            <div key={`journey-step-${introScene}`} className="journey-meter" role="status" aria-label={`Journey step ${introScene + 1} of ${introScenes.length}`}>
-              <strong aria-hidden="true">0{introScene + 1}</strong>
-              <div>
-                <span>Step {introScene + 1} of {introScenes.length}</span>
-                <div className="journey-meter-track" aria-hidden="true">
-                  {introScenes.map((scene, index) => <i key={scene.title} className={index <= introScene ? "active" : ""} />)}
-                </div>
-              </div>
-            </div>
-            <div className="platform-film-controls">
-              <button type="button" className="platform-film-play" onClick={playPlatformIntro} aria-pressed={introSpeaking}>
-                <span aria-hidden="true">{introSpeaking ? "❚❚" : "▶"}</span>
-                {introSpeaking ? "Pause introduction" : introPaused ? "Resume introduction" : introHeard ? "Replay introduction" : "Hear how it works"}
-              </button>
-            </div>
-          </section>
-          <section className={`profile-card account-profile-card auth-${authMode}`}>
-          <span className="eyebrow">WELCOME</span>
-          <h1>{authMode === "create" ? "Create your account." : "Sign in to practice."}</h1>
-          <p>{authMode === "create" ? "Add your student and language information once, then return with your email and password." : "Enter your ASU email and password to continue."}</p>
-          <form className="profile-form" onSubmit={submitAccount}>
-            <div className="profile-field-grid">
-              <label htmlFor="asu-email"><span>ASU email</span><input id="asu-email" type="email" value={asuEmail} onChange={(event) => setAsuEmail(event.target.value)} maxLength={160} placeholder="yourname@asu.edu" autoComplete="username" inputMode="email" autoFocus /></label>
-              <label htmlFor="account-password"><span>Password</span><input id="account-password" type="password" value={password} onChange={(event) => setPassword(event.target.value)} minLength={8} maxLength={128} placeholder={authMode === "create" ? "At least 8 characters" : "Enter your password"} autoComplete={authMode === "create" ? "new-password" : "current-password"} /></label>
-              {authMode === "create" && <label htmlFor="preferred-first-name"><span>First name</span><input id="preferred-first-name" value={preferredFirstName} onChange={(event) => setPreferredFirstName(event.target.value)} maxLength={40} placeholder="First name" autoComplete="given-name" /></label>}
-              {authMode === "create" && <label htmlFor="surname"><span>Surname</span><input id="surname" value={surname} onChange={(event) => setSurname(event.target.value)} maxLength={60} placeholder="Surname" autoComplete="family-name" /></label>}
-              {authMode === "create" && <label htmlFor="class-cohort"><span>Class / cohort</span><input id="class-cohort" value={classCohort} onChange={(event) => setClassCohort(event.target.value)} maxLength={40} placeholder="For example, Spring 26" /></label>}
-              {authMode === "create" && <label htmlFor="native-language"><span>Native language</span><input id="native-language" value={nativeLanguage} onChange={(event) => setNativeLanguage(event.target.value)} maxLength={60} placeholder="For example, Shona" autoComplete="language" /></label>}
-              {authMode === "create" && <label className="profile-field-wide" htmlFor="opi-language"><span>Language you are taking the OPI in</span><select id="opi-language" value={targetLanguagePackId} onChange={(event) => setTargetLanguagePackId(event.target.value)}>{languagePacks.map((definition) => <option key={definition.pack.id} value={definition.pack.id}>{definition.pack.displayName} · {definition.pack.nativeName}</option>)}</select><small>Maya’s prompts, speech recognition, and fluent example will use this language.</small></label>}
-            </div>
-            <button className="button button-gold" disabled={busy || !asuEmail.trim() || password.length < 8 || (authMode === "create" && (!preferredFirstName.trim() || !surname.trim() || !classCohort.trim() || !nativeLanguage.trim() || !targetLanguagePackId))}>{busy ? authMode === "create" ? "Creating account..." : "Signing in..." : authMode === "create" ? "Create account" : "Sign in"}</button>
-          </form>
-          {authMode === "sign-in" && (
-            <aside className="demo-access" aria-label="Demo account">
-              <div>
-                <strong>Demo access</strong>
-                <span>demo.student@asu.edu · Practice2026!</span>
-              </div>
-              <button
-                type="button"
-                className="text-link"
-                onClick={() => {
-                  setAsuEmail("demo.student@asu.edu");
-                  setPassword("Practice2026!");
-                  setError("");
-                }}
-              >
-                Use demo account
-              </button>
-            </aside>
-          )}
-          {error && <p className="form-error" role="alert">{error}</p>}
-          <div className="account-alternative">
-            <span>{authMode === "create" ? "Already have an account?" : "Don’t have an account?"}</span>
-            <button
-              type="button"
-              className="button account-alternative-button"
-              onClick={() => {
-                setAuthMode(authMode === "create" ? "sign-in" : "create");
-                setPassword("");
-                setError("");
-              }}
-            >
-              {authMode === "create" ? "Sign in" : "Create account"}
-            </button>
+      <main className="workspace-page practice-setup-page session-setup-page">
+        <section className="session-setup-card" aria-labelledby="session-setup-title">
+          <header className="session-setup-header">
+            <span className="session-brand-marker"><i aria-hidden="true" />BEYOND HELLO</span>
+            <h1 id="session-setup-title">Set Up Your Practice</h1>
+          </header>
+          <div className="session-step-progress" aria-label={`Question ${setupStep} of 3`}>
+            <span>Question {setupStep} of 3</span>
+            <div aria-hidden="true">{[1, 2, 3].map((step) => <i key={step} className={step <= setupStep ? "active" : ""} />)}</div>
           </div>
-          <small className="profile-note">Your password is securely protected and never displayed.</small>
-          </section>
-        </div>
+          <form className="session-setup-form" onSubmit={setupStep === 3 ? submitSessionSetup : advanceSessionSetup}>
+            {setupStep === 1 && <label className="session-question-card session-step-panel" htmlFor="practice-first-name">
+              <span className="session-question-heading"><b aria-hidden="true">01</b>What would you like Maya to call you?</span>
+              <input id="practice-first-name" value={firstName} onChange={(event) => setFirstName(event.target.value)} maxLength={40} autoComplete="given-name" placeholder="Name Maya should use" autoFocus />
+            </label>}
+            {setupStep === 2 && <label className="session-question-card session-step-panel" htmlFor="practice-language">
+              <span className="session-question-heading"><b aria-hidden="true">02</b>What language would you like to practice?</span>
+              <select id="practice-language" value={selectedPackId} onChange={(event) => setSelectedPackId(event.target.value)} autoFocus>
+                {languagePacks.map((definition) => <option key={definition.pack.id} value={definition.pack.id}>{definition.pack.displayName} · {definition.pack.nativeName}</option>)}
+              </select>
+            </label>}
+            {setupStep === 3 && <label className="session-question-card session-duration-field session-step-panel" htmlFor="session-practice-duration">
+              <span className="session-question-heading"><b aria-hidden="true">03</b>How long would you like to practice?</span>
+              <output htmlFor="session-practice-duration">{practiceMinutes} {practiceMinutes === 1 ? "minute" : "minutes"}</output>
+              <input id="session-practice-duration" type="range" min="1" max="20" step="1" value={practiceMinutes} onChange={(event) => setPracticeMinutes(Number(event.target.value))} autoFocus />
+              <small>Choose between 1 and 20 minutes.</small>
+            </label>}
+            <button className="button button-gold session-step-action" disabled={busy || (setupStep === 1 && !firstName.trim())}>Continue</button>
+          </form>
+          {error && <p className="form-error" role="alert">{error}</p>}
+          <small className="session-privacy-note">The name you choose is used only for this practice session. No account is created.</small>
+        </section>
       </main>
     );
   }
@@ -746,58 +765,43 @@ export default function PracticePage() {
   if (!snapshot) {
     return (
       <main className="workspace-page practice-setup-page ready-start-page">
-        <section className="ready-start-hero">
-          <div className="ready-start-copy">
-            <span className="eyebrow">OPI INTERVIEW PRACTICE</span>
-            <h1>Hi, {profile.preferredFirstName}.</h1>
-            <p>{profile.classCohort} · Native language: {profile.nativeLanguage} · OPI language: {selectedPack.pack.displayName}</p>
-            {profile.id === "demo-student-profile" && (
-              <label className="demo-language-select" htmlFor="demo-practice-language">
-                <span>Choose a practice language</span>
-                <select
-                  id="demo-practice-language"
-                  value={selectedPackId}
-                  onChange={(event) => {
-                    const nextLanguagePackId = event.target.value;
-                    setSelectedPackId(nextLanguagePackId);
-                    window.localStorage.setItem("opi_active_language_pack", nextLanguagePackId);
-                    setError("");
-                  }}
-                >
-                  {languagePacks.map((definition) => (
-                    <option key={definition.pack.id} value={definition.pack.id}>
-                      {definition.pack.displayName} · {definition.pack.nativeName}
-                    </option>
-                  ))}
-                </select>
-                {selectedPackId === "lang_sn_zw_v1" && (
-                  <small className="shona-pilot-note">Pilot pack · Audio uses your device voice until native Shona recordings are added.</small>
-                )}
-              </label>
-            )}
-            <label className="practice-duration" htmlFor="practice-duration">
-              <span>
-                <strong>Practice length</strong>
-                <output htmlFor="practice-duration">{practiceMinutes} {practiceMinutes === 1 ? "minute" : "minutes"}</output>
-              </span>
-              <input
-                id="practice-duration"
-                type="range"
-                min="1"
-                max="20"
-                step="1"
-                value={practiceMinutes}
-                onChange={(event) => setPracticeMinutes(Number(event.target.value))}
-              />
-              <small>Choose between 1 and 20 minutes.</small>
-            </label>
-            <div className="ready-start-actions">
-              <button className="button button-gold" onClick={startPractice} disabled={busy}>{busy ? "Preparing..." : "Start interview"}</button>
+        <section className="preconversation-card" aria-labelledby="preconversation-title">
+          <div className="preconversation-maya" aria-label="Maya, your AI conversation partner">
+            <span className="preconversation-avatar" aria-hidden="true">M</span>
+            <div>
+              <span>YOUR CONVERSATION PARTNER</span>
+              <strong>Maya</strong>
             </div>
           </div>
-          <figure className="interview-hero-visual" role="img" aria-label="Two graduate students practicing an oral interview in Thunderbird's global campus space">
-            <figcaption><span>Listen</span><span>Speak</span><span>Respond naturally</span></figcaption>
-          </figure>
+          <div className="preconversation-content">
+            <span className="eyebrow">HOW IT WORKS</span>
+            <h1 id="preconversation-title">{sessionIdentity.firstName}, here&apos;s how your conversation will work.</h1>
+            <p className="preconversation-summary">{selectedPack.pack.displayName} · {practiceMinutes} {practiceMinutes === 1 ? "minute" : "minutes"}</p>
+            <div className="readiness-progress" aria-label={`Instruction ${readinessStep + 1} of ${readinessCards.length}`}>
+              <span>{readinessStep + 1} of {readinessCards.length}</span>
+              <div aria-hidden="true">
+                {readinessCards.map((card, index) => <i key={card.title} className={index <= readinessStep ? "active" : ""} />)}
+              </div>
+            </div>
+            <article className="readiness-flashcard" aria-live="polite">
+              <span className="readiness-card-number" aria-hidden="true">{String(readinessStep + 1).padStart(2, "0")}</span>
+              <div>
+                <h2>{readinessCards[readinessStep].title}</h2>
+                <p>{readinessCards[readinessStep].description}</p>
+              </div>
+            </article>
+            <div className="readiness-navigation">
+              {readinessStep > 0 && <button className="button button-quiet" type="button" onClick={() => setReadinessStep((current) => Math.max(0, current - 1))}>Previous</button>}
+              {readinessStep < readinessCards.length - 1 ? (
+                <button className="button button-gold readiness-next" type="button" onClick={() => setReadinessStep((current) => Math.min(readinessCards.length - 1, current + 1))}>Next</button>
+              ) : (
+                <div className="preconversation-actions">
+                  <button className="button button-gold preconversation-start" type="button" onClick={() => void startPractice("full")} disabled={busy}>{busy ? "Preparing..." : "Start"}</button>
+                  <button className="button button-quiet preconversation-preview" type="button" onClick={() => void startPractice("preview")} disabled={busy}>Try one question first</button>
+                </div>
+              )}
+            </div>
+          </div>
         </section>
         {error && <p className="form-error setup-error" role="alert">{error}</p>}
       </main>
@@ -808,11 +812,11 @@ export default function PracticePage() {
     <main className="workspace-page conversation-page">
       <div className="workspace-heading conversation-heading">
         <div>
-          <span className="eyebrow">OPI INTERVIEW PRACTICE · {selectedPack.pack.displayName}</span>
+          <span className="eyebrow">{isQuestionPreview ? "ONE-QUESTION PREVIEW" : `${selectedPack.pack.displayName.toUpperCase()} PRACTICE`}</span>
           <h1>Conversation with Maya</h1>
-          <p>Listen to each question, then answer aloud in your own words.</p>
+          <p>Listen to Maya&apos;s question, then answer naturally in your own words.</p>
         </div>
-        <button className="text-link" onClick={resetPractice}>Leave interview</button>
+        {!completed && !isQuestionPreview && <button className="text-link" onClick={confirmEndConversation} disabled={busy || recordingFinalizing || isRecording} title={isRecording ? "Send your current response before ending the conversation." : undefined}>End Conversation</button>}
       </div>
       <div className="conversation-layout">
         {countdown !== null ? (
@@ -825,7 +829,7 @@ export default function PracticePage() {
         <section className="conversation-card" aria-label="Practice conversation">
           <div className={isMayaSpeaking ? "interviewer-bar speaking" : "interviewer-bar"}>
             <span className="interviewer-avatar">M</span>
-            <span><strong>Maya</strong><small>{snapshot.title} · Turn {answerCount + 1} · {mayaVoiceMode === "browser" ? "Device voice" : "Text only"}</small></span>
+            <span><strong>Maya</strong></span>
             <time className={timeExpired ? "conversation-timer expired" : "conversation-timer"} dateTime={`PT${remainingSeconds}S`} aria-live="polite">
               {timeExpired ? "Time complete" : `${String(Math.floor(remainingSeconds / 60)).padStart(2, "0")}:${String(remainingSeconds % 60).padStart(2, "0")}`}
             </time>
@@ -834,67 +838,52 @@ export default function PracticePage() {
               {isMayaSpeaking ? "Maya is speaking" : canRecord ? "Your turn" : "Wait for the beep"}
             </span>
           </div>
-          <div
-            className="conversation-progress"
-            role="progressbar"
-            aria-label={`Conversation progress: ${conversationStages[conversationStageIndex]}, stage ${conversationStageIndex + 1} of ${conversationStages.length}`}
-            aria-valuemin={1}
-            aria-valuemax={conversationStages.length}
-            aria-valuenow={conversationStageIndex + 1}
-          >
-            <div className="conversation-progress-heading">
-              <strong>Conversation progress</strong>
-              <span>{conversationStages[conversationStageIndex]} · Stage {conversationStageIndex + 1} of {conversationStages.length}</span>
-            </div>
-            <div className="conversation-progress-track" aria-hidden="true">
-              {conversationStages.map((stage, index) => (
-                <span className={index < conversationStageIndex ? "complete" : index === conversationStageIndex ? "active" : ""} key={stage}>
-                  <i />
-                  <small>{stage}</small>
-                </span>
-              ))}
-            </div>
-          </div>
           <div className="message-stream" aria-live="polite">
             {snapshot.turns.map((turn) => {
               const coachTextHidden = turn.role === "coach" && !revealedCoachTurns.includes(turn.id);
               return <div className={`message-row ${turn.role}`} key={turn.id}>
                 <span className="message-speaker">{turn.role === "coach" ? "Maya" : "You"}</span>
-                <div className={coachTextHidden ? "message-bubble audio-question" : "message-bubble"}><p>{coachTextHidden ? "Listen to Maya’s question" : turn.text}</p>{turn.role === "learner" && playbackUrls[turn.id] && <audio className="inline-audio" controls src={playbackUrls[turn.id]} preload="metadata" />}<div className="message-meta"><button type="button" onClick={() => replayTurn(turn)}>{turn.role === "learner" && playbackUrls[turn.id] ? "Replay my voice" : "Listen again"}</button>{coachTextHidden && <button type="button" onClick={() => setRevealedCoachTurns((current) => [...current, turn.id])}>Show words</button>}</div></div>
+                <div className={coachTextHidden ? "message-bubble audio-question" : "message-bubble"}><p>{coachTextHidden ? "Listen to Maya’s question" : turn.text}</p>{turn.role === "learner" && playbackUrls[turn.id] && <audio className="inline-audio" controls src={playbackUrls[turn.id]} preload="metadata" />}<div className="message-meta"><button type="button" disabled={isRecording || busy || recordingFinalizing || isMayaSpeaking} onClick={() => replayTurn(turn)}>{turn.role === "learner" && playbackUrls[turn.id] ? "Replay my voice" : "Listen Again"}</button>{coachTextHidden && <button type="button" onClick={() => setRevealedCoachTurns((current) => [...current, turn.id])}>Show Words</button>}</div></div>
               </div>;
             })}
-            {busy && !completed && <div className="message-row coach"><span className="message-speaker">Maya</span><div className="message-bubble thinking"><span /><span /><span /><p>Listening…</p></div></div>}
+            {busy && !completed && <div className="message-row coach"><span className="message-speaker">Maya</span><div className="message-bubble thinking"><span /><span /><span /><p>{processingStage === "saving-recording" ? "Saving your recording…" : processingStage === "maya-responding" ? "Preparing the next question…" : "Receiving your response…"}</p></div></div>}
             <div ref={conversationEnd} />
           </div>
-          {completed ? (
+          {completed && isQuestionPreview ? (
+            <div className="conversation-complete question-preview-complete" role="status" aria-live="polite">
+              <div className="preview-complete-mark" aria-hidden="true">✓</div>
+              <div className="completion-copy"><span className="completion-label">Practice question complete</span><strong>You tried one question with Maya.</strong><p>This was a short preview. It does not create a feedback report or count toward your full conversation.</p></div>
+              <div className="completion-actions"><button type="button" className="button button-gold" onClick={() => void startPractice("full")} disabled={busy}>Start Full Conversation</button><button type="button" className="button button-quiet" onClick={() => void startPractice("preview")} disabled={busy}>Try Another Question</button></div>
+            </div>
+          ) : completed ? (
             <div className="conversation-complete" role="status" aria-live="polite">
               <div className="completion-celebration" aria-hidden="true"><span>👏</span><span>👏</span></div>
-              <div className="completion-copy"><span className="completion-label">Interview complete</span><strong>You completed your practice interview.</strong><p>Your personalized coaching feedback, transcript, and saved voice recordings are ready.</p></div>
+              <div className="completion-copy"><span className="completion-label">Conversation complete</span><strong>Great work completing your conversation practice.</strong><p>Regular speaking practice is part of developing confidence and proficiency. Your descriptive practice feedback, transcript, and saved voice recordings are ready.</p></div>
               <div className="completion-actions"><a className="button button-gold" href={`/api/practice/report?sessionId=${snapshot.sessionId}&mode=${storageMode}`} download>Download my feedback report</a><Link className="button button-quiet" href={`/transcript?sessionId=${snapshot.sessionId}&mode=${storageMode}`}>Review conversation</Link></div>
             </div>
           ) : (
             <form className="response-composer" onSubmit={sendResponse}>
               {timeExpired && <div className="time-limit-notice" role="status"><strong>Practice time complete</strong><span>Finish your current answer. Maya will close the interview after it is sent.</span></div>}
               <div className="turn-panel-heading" aria-live="polite">
-                <span className={recordedBlob && !voiceDetected ? "turn-state attention" : "turn-state"}>{turnState.label}</span>
+                <span className={recordedBlob && !voiceDetected || microphoneRetryAvailable ? "turn-state attention" : "turn-state"}>{turnState.label}</span>
                 <div><strong>{turnState.title}</strong><p>{turnState.detail}</p></div>
               </div>
               <div className={isRecording ? "voice-capture voice-first-capture recording" : preparationSeconds !== null ? "voice-capture voice-first-capture preparing" : "voice-capture voice-first-capture"}>
-                <button type="button" className={isRecording ? "record-button active" : "record-button"} onClick={isRecording ? stopRecording : undefined} disabled={!isRecording || busy}>
+                <button type="button" className={isRecording ? "record-button active" : "record-button"} onClick={isRecording ? stopRecording : microphoneRetryAvailable ? () => void startRecording() : undefined} disabled={busy || microphoneStarting || (!isRecording && !microphoneRetryAvailable)}>
                   <span className="microphone-mark" aria-hidden="true">{isRecording ? "■" : "●"}</span>
-                  <span>{isRecording ? "Stop recording" : preparationSeconds !== null ? `Starting in ${preparationSeconds}` : recordedBlob ? "Sending response" : "Waiting for Maya"}</span>
+                  <span>{isRecording ? "Send Response" : microphoneStarting ? "Connecting microphone…" : microphoneRetryAvailable ? "Try Microphone Again" : preparationSeconds !== null ? `Starting in ${preparationSeconds}` : recordedBlob ? "Sending response" : "Waiting for Maya"}</span>
                 </button>
                 {preparationSeconds !== null && <div className="recording-preparation" role="timer" aria-live="assertive"><strong>{preparationSeconds}</strong><span>Prepare your answer<small>Recording begins after the beep.</small></span></div>}
-                {isRecording && <div className="recording-time"><span className="recording-wave" aria-hidden="true"><i /><i /><i /><i /></span><strong>{String(Math.floor(recordingSeconds / 60)).padStart(2, "0")}:{String(recordingSeconds % 60).padStart(2, "0")}</strong></div>}
                 {recordedPreviewUrl && !isRecording && <div className="voice-preview"><audio controls src={recordedPreviewUrl} /></div>}
                 <label className="save-voice-toggle"><input type="checkbox" checked={recordingConsent} onChange={(event) => setRecordingConsent(event.target.checked)} disabled={busy} /><span>Keep my voice recording for replay</span></label>
               </div>
               {response.trim() && <div id="practice-response" className="transcript-preview" role="status" aria-live="polite"><span>What Maya heard</span><p>{response}</p></div>}
               {recordedBlob && voiceDetected && !response.trim() && <div id="practice-response" className="transcript-preview quiet" role="status"><span>Transcript unavailable</span><p>Your voice is recorded. Maya may ask you to repeat if the words cannot be understood.</p></div>}
-              <div className="composer-footer"><button type="button" className="finish-link" onClick={finishPractice} disabled={busy || isRecording || preparationSeconds !== null || recordingFinalizing}>Finish interview</button><button type="submit" className="button button-gold" disabled={busy || isRecording || preparationSeconds !== null || recordingFinalizing || !recordedBlob}>{busy ? "Sending..." : "Retry sending"}</button></div>
+              <div className="composer-footer">{recordedBlob && <button type="submit" className="button button-gold" disabled={busy || isRecording || preparationSeconds !== null || recordingFinalizing || submissionLock.current}>{busy ? "Sending…" : "Send Response"}</button>}</div>
             </form>
           )}
           {error && <p className="form-error conversation-error" role="alert">{error}</p>}
+          {recordingSaveError && <div className="recording-save-error" role="alert"><div><strong>Your answer was saved.</strong><p>{recordingSaveError} The local recording remains available on this page.</p></div><button type="button" className="button button-quiet" onClick={() => void retryPendingRecordings()} disabled={recordingUploadRetrying}>{recordingUploadRetrying ? "Saving…" : "Save recording again"}</button></div>}
         </section>
         )}
       </div>

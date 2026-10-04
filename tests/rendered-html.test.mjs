@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { readFile } from "node:fs/promises";
 
 async function render(pathname) {
   const workerUrl = new URL("../dist/server/index.js", import.meta.url);
@@ -116,16 +117,113 @@ test("creates and remembers a student account profile", async () => {
   assert.equal(rejectedSignIn.status, 401);
 });
 
-for (const pathname of ["/", "/practice", "/shadow", "/community", "/transcript", "/progress"]) {
+for (const pathname of ["/", "/practice", "/shadow", "/community", "/transcript", "/progress", "/about", "/resources", "/resources/thunderbird-language-information", "/help"]) {
   test(`server-renders ${pathname}`, async () => {
     const response = await render(pathname);
     assert.equal(response.status, 200);
     assert.match(response.headers.get("content-type") ?? "", /^text\/html\b/i);
     const html = await response.text();
-    assert.match(html, /AI OPI Conversation Studio/i);
+    assert.match(html, /Beyond Hello|AI-Guided Conversation Studio/i);
     assert.doesNotMatch(html, /codex-preview|react-loading-skeleton/i);
   });
 }
+
+test("landing page presents only the approved entry actions", async () => {
+  const response = await render("/");
+  assert.equal(response.status, 200);
+  const html = await response.text();
+  assert.match(html, /An AI-Guided[\s\S]*Conversation Studio\./i);
+  assert.doesNotMatch(html, /Practice now\. Avoid surprises later\./i);
+  assert.match(html, /An AI-Guided Conversation Studio\./i);
+  assert.match(html, /Beyond Hello/i);
+  assert.match(html, /\/icons\/beyond-hello-mark\.png/i);
+  assert.match(html, /Set Up Practice/i);
+  assert.match(html, /Listen to How This Works/i);
+  assert.doesNotMatch(html, /Practice disclaimer/i);
+  assert.doesNotMatch(html, /institution-mark/i);
+  assert.match(html, /\/icons\/beyond-hello-16\.png/i);
+  assert.match(html, /\/icons\/beyond-hello-180\.png/i);
+  assert.doesNotMatch(html, /AI OPI|OPI Studio|Sign in to practice|ASU email|Start practice<\/a>/i);
+});
+
+test("practice setup is session-only and does not require an account", async () => {
+  const response = await render("/practice");
+  assert.equal(response.status, 200);
+  const html = await response.text();
+  assert.match(html, /Set Up Your Practice/i);
+  assert.match(html, /What would you like Maya to call you\?/i);
+  assert.match(html, /Question 1 of 3/i);
+  assert.match(html, /Continue/i);
+  assert.doesNotMatch(html, /What language would you like to practice\?|How long would you like to practice\?|Start Conversation/i);
+  assert.doesNotMatch(html, /ASU email|Password|Surname|Native language|Class \/ cohort|Create account|Sign in to practice/i);
+  const source = await readFile(new URL("../app/practice/page.tsx", import.meta.url), "utf8");
+  assert.match(source, /setupStep === 1[\s\S]*What would you like Maya to call you\?/i);
+  assert.match(source, /setupStep === 2[\s\S]*What language would you like to practice\?/i);
+  assert.match(source, /setupStep === 3[\s\S]*How long would you like to practice\?/i);
+  assert.doesNotMatch(source, /onPointerUp=.*completeSessionSetup|Release the slider to continue automatically/i);
+  assert.match(source, /session-step-action[\s\S]*Continue/i);
+  assert.doesNotMatch(source, />Start Conversation</i);
+});
+
+test("starts an anonymous practice session with the current first name", async () => {
+  const worker = await loadWorker("anonymous-session-setup");
+  const response = await worker.fetch(new Request("http://localhost/api/practice", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ action: "start", languagePackId: "lang_en_us_v1", participantName: "Nia", practiceMinutes: 7 }),
+  }), runtimeEnv, runtimeContext);
+  assert.equal(response.status, 200);
+  assert.equal(response.headers.get("set-cookie"), null);
+  const started = await response.json();
+  assert.equal(started.snapshot.languagePackId, "lang_en_us_v1");
+  assert.match(started.snapshot.turns[0].text, /Nia/i);
+  assert.equal("participantKey" in started, false);
+});
+
+test("walks the student through the pre-conversation recording flow", async () => {
+  const source = await readFile(new URL("../app/practice/page.tsx", import.meta.url), "utf8");
+  assert.match(source, /here&apos;s how your conversation will work/i);
+  assert.match(source, /After Maya finishes, a 10-second timer will begin/i);
+  assert.match(source, /hear a beep\. Start speaking—recording begins automatically/i);
+  assert.match(source, /When you finish speaking, select Send Response/i);
+  assert.match(source, /Instruction \$\{readinessStep \+ 1\} of \$\{readinessCards\.length\}/i);
+  assert.match(source, /readinessStep < readinessCards\.length - 1[\s\S]*Next/i);
+  assert.match(source, /readinessStep > 0[\s\S]*Previous/i);
+  assert.match(source, /busy \? "Preparing\.\.\." : "Start"/i);
+  assert.match(source, /Try one question first/i);
+  assert.match(source, /completeAfterResponse: timeExpired \|\| isQuestionPreview/i);
+  assert.match(source, /Start Full Conversation/i);
+  assert.match(source, /Try Another Question/i);
+  assert.match(source, /does not create a feedback report/i);
+  assert.doesNotMatch(source, /Start interview|id="practice-duration"|Listen<\/span><span>Speak|conversation-progress|Stop recording|Retry sending/i);
+});
+
+test("keeps the Phase 4 live conversation focused, stateful, and recoverable", async () => {
+  const source = await readFile(new URL("../app/practice/page.tsx", import.meta.url), "utf8");
+  assert.match(source, /Listen to Maya&apos;s question, then answer naturally in your own words/i);
+  assert.match(source, /Listen Again/i);
+  assert.match(source, /Show Words/i);
+  assert.match(source, /mayaFemaleVoicePattern/i);
+  assert.match(source, /utterance\.voice = mayaVoice/i);
+  assert.match(source, /utterance\.pitch = 1\.06/i);
+  assert.match(source, /Send Response/i);
+  assert.match(source, /End Conversation/i);
+  assert.match(source, /audioBitsPerSecond:\s*48_000/i);
+  assert.match(source, /submissionLock\.current/i);
+  assert.match(source, /Save recording again/i);
+  assert.match(source, /Connecting microphone/i);
+  assert.match(source, /Try Microphone Again/i);
+  assert.match(source, /completeAfterResponse: timeExpired \|\| isQuestionPreview/i);
+  assert.doesNotMatch(source, />Stop Recording</i);
+});
+
+test("shared navigation uses only the approved information architecture", async () => {
+  const source = await readFile(new URL("../app/components/AppShell.tsx", import.meta.url), "utf8");
+  assert.match(source, /href: "\/about"/i);
+  assert.match(source, /href: "\/resources"/i);
+  assert.doesNotMatch(source, /href: "\/help"|label: "Help"/i);
+  assert.doesNotMatch(source, /label: "Practice"|label: "Replay"|label: "Fluent Example"|label: "My Progress"|Start practice/i);
+});
 
 test("builds student-specific progress from completed conversations", async () => {
   const worker = await loadWorker("progress-history");
@@ -233,6 +331,31 @@ test("runs an adaptive practice conversation and saves every turn", async () => 
   const audioResponse = await worker.fetch(new Request(`http://localhost${recording.recording.playbackUrl}`), runtimeEnv, runtimeContext);
   assert.equal(audioResponse.status, 200);
   assert.equal(audioResponse.headers.get("content-type"), "audio/webm");
+});
+
+test("accepts a controlled long recording and exposes upload diagnostics", async () => {
+  const worker = await loadWorker("long-recording-diagnostics");
+  const started = await startAdaptiveSession(worker, "Nia");
+  const continued = await sendAdaptiveResponse(worker, started, "I enjoy working with international teams because every project gives me a different perspective.");
+  const learnerTurn = continued.turns.find((turn) => turn.role === "learner");
+
+  const longForm = new FormData();
+  longForm.set("audio", new File([new Uint8Array(512 * 1024)], "long-answer.webm", { type: "audio/webm" }));
+  longForm.set("sessionId", started.snapshot.sessionId);
+  longForm.set("messageId", learnerTurn.id);
+  longForm.set("durationMs", String(10 * 60 * 1000));
+  longForm.set("consentGranted", "true");
+  longForm.set("mode", started.storageMode);
+  longForm.set("clientUploadId", "long-recording-test");
+  const accepted = await worker.fetch(new Request("http://localhost/api/practice/recording", { method: "POST", body: longForm }), runtimeEnv, runtimeContext);
+  assert.equal(accepted.status, 200);
+  assert.ok(accepted.headers.get("x-recording-diagnostic-id"));
+
+  const routeSource = await readFile(new URL("../app/api/practice/recording/route.ts", import.meta.url), "utf8");
+  assert.match(routeSource, /15 \* 1024 \* 1024/i);
+  assert.match(routeSource, /status:\s*413|,\s*413\)/i);
+  assert.match(routeSource, /failureLocation/i);
+  assert.match(routeSource, /x-recording-diagnostic-id/i);
 });
 
 test("runs localized practice turns for Spanish and Japanese packs", async () => {

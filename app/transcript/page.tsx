@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { rubricDimensionDefinitions, type AdaptiveRubricProfile } from "@/lib/conversation/adaptive-rubric";
+import type { AdaptiveRubricProfile } from "@/lib/conversation/adaptive-rubric";
 import { getDefaultLanguagePackDefinition, getLanguagePackDefinition } from "@/lib/language-packs/registry";
 
 const defaultLanguagePack = getDefaultLanguagePackDefinition();
@@ -197,15 +197,9 @@ export default function TranscriptPage() {
           <div className="replay-summary"><span className="eyebrow">SESSION SUMMARY</span><div><strong>{transcript.length}</strong><span>Total turns</span></div><div><strong>{learnerCount}</strong><span>Your responses</span></div><div><strong>{recordedCount}</strong><span>Voice recordings</span></div></div>
           {rubricProfile && (
             <section className="estimate-card adaptive-profile-card" aria-labelledby="adaptive-profile-heading">
-              <span className="eyebrow">ADAPTIVE COACHING PROFILE</span>
-              <h2 id="adaptive-profile-heading">{rubricProfile.currentStage}</h2>
-              <p className="estimate-summary">Current coaching stage · {rubricProfile.overallScore.toFixed(1)} / 5 across {rubricProfile.turnsAnalyzed} responses</p>
-              <div className="rubric-dimensions">
-                {rubricDimensionDefinitions.map((definition) => {
-                  const dimension = rubricProfile.dimensions[definition.key];
-                  return <div className="rubric-dimension" key={definition.key}><div><strong>{definition.label}</strong><span>{dimension.score.toFixed(1)} / 5</span></div><div className="rubric-track" aria-label={`${definition.label}: ${dimension.score.toFixed(1)} out of 5`}><i style={{ width: `${dimension.score * 20}%` }} /></div><p>{dimension.evidence}</p></div>;
-                })}
-              </div>
+              <span className="eyebrow">PRACTICE REFLECTION</span>
+              <h2 id="adaptive-profile-heading">How did I do?</h2>
+              <p className="estimate-summary">Descriptive guidance based on what you demonstrated in this conversation.</p>
               <div className="coaching-summary-grid">
                 <div><strong>Strengths</strong>{rubricProfile.strengths.map((item) => <p key={item}>{item}</p>)}</div>
                 <div><strong>Growth areas</strong>{rubricProfile.growthAreas.map((item) => <p key={item}>{item}</p>)}</div>
@@ -213,6 +207,7 @@ export default function TranscriptPage() {
               <div className="estimate-focus"><strong>Next conversation</strong><p>{rubricProfile.recommendation}</p></div>
               <div className="stronger-phrase"><strong>Try this phrase</strong><p>“{rubricProfile.strongerPhrase}”</p></div>
               {!rubricProfile.languageUse.targetLocaleTag.toLowerCase().startsWith("en") && <div className={`language-use-card ${rubricProfile.languageUse.status === "mixed_language" ? "attention" : ""}`}><strong>Target-language consistency</strong><p>{rubricProfile.languageUse.summary}</p>{rubricProfile.languageUse.englishWords.length > 0 && <p>English detected: {rubricProfile.languageUse.englishWords.join(", ")}</p>}<small>Transcript-based coaching check; speech recognition can occasionally mishear a word.</small></div>}
+              <div className="reflection-prompts"><strong>Reflect while you replay</strong><p>What did you do well?</p><p>What would you try differently next time?</p></div>
             </section>
           )}
           <div className="privacy-card"><strong>Coaching profile only</strong><p>{rubricProfile?.disclaimer ?? "This studio does not provide an official OPI rating, certification, pass/fail result, or readiness decision."}</p></div>

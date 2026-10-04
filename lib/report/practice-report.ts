@@ -86,8 +86,8 @@ export async function createPracticeReport(input: PracticeReportInput): Promise<
   const pdf = await PDFDocument.create();
   const regular = await pdf.embedFont(StandardFonts.Helvetica);
   const bold = await pdf.embedFont(StandardFonts.HelveticaBold);
-  pdf.setTitle("AI OPI Conversation Studio - Practice Report");
-  pdf.setAuthor("AI OPI Conversation Studio");
+  pdf.setTitle("Beyond Hello - Practice and Reflection Report");
+  pdf.setAuthor("Beyond Hello");
   pdf.setSubject("Practice and reflection report");
 
   let page: PDFPage = pdf.addPage([612, 792]);
@@ -101,7 +101,7 @@ export async function createPracticeReport(input: PracticeReportInput): Promise<
     page = pdf.addPage([612, 792]);
     page.drawRectangle({ x: 0, y: 720, width: 612, height: 72, color: navy });
     page.drawRectangle({ x: 0, y: 716, width: 612, height: 4, color: gold });
-    page.drawText("AI OPI CONVERSATION STUDIO", { x: margin, y: 759, size: 10, font: bold, color: gold });
+    page.drawText("BEYOND HELLO", { x: margin, y: 759, size: 10, font: bold, color: gold });
     page.drawText("Practice and Reflection Report", { x: margin, y: 736, size: 20, font: bold, color: white });
     y = 688;
   };
@@ -162,7 +162,7 @@ export async function createPracticeReport(input: PracticeReportInput): Promise<
   y -= 86;
 
   section("Adaptive coaching profile");
-  drawWrapped(`${rubricProfile.currentStage} stage - ${rubricProfile.overallScore.toFixed(1)} / 5 coaching profile`, { size: 15, font: bold, color: navy });
+  drawWrapped("How did I do?", { size: 15, font: bold, color: navy });
   drawWrapped(rubricProfile.disclaimer, { size: 8.5, color: muted });
   y -= 6;
   for (const definition of rubricDimensionDefinitions) {
@@ -209,7 +209,7 @@ export async function createPracticeReport(input: PracticeReportInput): Promise<
   const pages = pdf.getPages();
   pages.forEach((reportPage, index) => {
     reportPage.drawRectangle({ x: margin, y: 38, width: contentWidth, height: 1, color: rgb(220 / 255, 226 / 255, 232 / 255) });
-    reportPage.drawText("Practice only - no scores or official evaluation", { x: margin, y: 21, size: 8, font: regular, color: muted });
+    reportPage.drawText("Practice guidance only - not an official evaluation", { x: margin, y: 21, size: 8, font: regular, color: muted });
     reportPage.drawText(`Page ${index + 1} of ${pages.length}`, { x: 510, y: 21, size: 8, font: regular, color: muted });
   });
 
