@@ -72,7 +72,12 @@ export class MockConversationProvider implements ConversationProvider {
     const latest = learnerTurns.at(-1)?.text.trim() ?? "";
     const localized = getLocalizedInterviewScript(context.languagePackId);
     if (localized) {
-      if (!latest || transcriptUnavailable(latest)) return localized.noSpeech;
+      if (!latest) return localized.noSpeech;
+      if (transcriptUnavailable(latest)) {
+        const coachTurns = context.turns.filter((turn) => turn.role === "coach").map((turn) => turn.text);
+        const nextIndex = Math.min(localized.followUps.length - 1, Math.max(0, learnerTurns.length - 1));
+        return chooseUnaskedPrompt([...localized.followUps.slice(nextIndex), ...localized.followUps.slice(0, nextIndex)], coachTurns);
+      }
       const latestLanguageUse = analyzeResponseLanguageUse(latest, context.localeTag);
       if (latestLanguageUse.status === "mixed_language") return createTargetLanguageRedirect(context.localeTag, latestLanguageUse.englishWords);
       if (responseUnits(latest, context.localeTag) < 6) return localized.elaborate;
@@ -87,6 +92,12 @@ export class MockConversationProvider implements ConversationProvider {
       return chooseUnaskedPrompt(stageCandidates, coachTurns);
     }
     const currentPrompt = [...context.turns].reverse().find((turn) => turn.role === "coach")?.text ?? "";
+    if (transcriptUnavailable(latest)) {
+      const coachTurns = context.turns.filter((turn) => turn.role === "coach").map((turn) => turn.text);
+      const fallbackStages: InterviewStage[] = ["warmup", "description", "story", "opinion", "role_play", "wrap"];
+      const fallbackStage = fallbackStages[Math.min(fallbackStages.length - 1, learnerTurns.length - 1)] ?? "warmup";
+      return chooseUnaskedPrompt(alternatePrompts[fallbackStage], coachTurns);
+    }
     const assessment = assessResponse(currentPrompt, latest);
     if (assessment.outcome !== "answered") return createRepairResponse(assessment);
 

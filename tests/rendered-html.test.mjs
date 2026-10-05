@@ -213,6 +213,12 @@ test("keeps the Phase 4 live conversation focused, stateful, and recoverable", a
   assert.match(source, /Save recording again/i);
   assert.match(source, /Connecting microphone/i);
   assert.match(source, /Try Microphone Again/i);
+  assert.match(source, /Live transcript/i);
+  assert.match(source, /transcriptText\.current\.trim\(\) \|\| response\.trim\(\)/i);
+  assert.match(source, /Resume Conversation/i);
+  assert.match(source, /Pause Conversation/i);
+  assert.match(source, /mediaRecorder\.current\?\.state === "recording"[\s\S]*\.pause\(\)/i);
+  assert.match(source, /mediaRecorder\.current\?\.state === "paused"[\s\S]*\.resume\(\)/i);
   assert.match(source, /completeAfterResponse: timeExpired \|\| isQuestionPreview/i);
   assert.doesNotMatch(source, />Stop Recording</i);
 });
@@ -505,7 +511,8 @@ test("accepts a recorded response when automatic transcription is unavailable", 
   assert.match(continued.turns[0].text, /spoken response recorded/i);
   assert.equal(continued.turns[0].role, "learner");
   assert.equal(continued.turns[1].role, "coach");
-  assert.match(continued.turns[1].text, /didn.t catch an answer/i);
+  assert.doesNotMatch(continued.turns[1].text, /didn.t catch an answer/i);
+  assert.match(continued.turns[1].text, /typical day|influenced you|comfortable|work or study/i);
   assert.doesNotMatch(continued.turns[1].text, /get to know|helpful picture|sounds important/i);
 
   const retryResponse = await worker.fetch(new Request("http://localhost/api/practice", {
@@ -515,12 +522,11 @@ test("accepts a recorded response when automatic transcription is unavailable", 
       action: "respond",
       sessionId: started.snapshot.sessionId,
       storageMode: started.storageMode,
-      text: "I am a student and I enjoy working with people from different cultures.",
+      text: "I usually wake up early, attend classes during the day, and study with friends in the evening because the routine helps me stay focused.",
     }),
   }), runtimeEnv, runtimeContext);
   const retried = await retryResponse.json();
-  assert.match(retried.turns[1].text, /work or studies|meaningful/i);
-  assert.doesNotMatch(retried.turns[1].text, /hometown|memorable trip/i);
+  assert.doesNotMatch(retried.turns[1].text, /didn.t catch an answer|describe your typical day/i);
 });
 
 test("checks whether the learner answered before advancing", async () => {

@@ -479,6 +479,13 @@ textarea:focus, input:focus { outline: 2px solid rgba(1, 121, 183, 0.22); border
 .finish-link:disabled { cursor: not-allowed; opacity: 0.5; }
 .composer-footer .button { min-width: 150px; }
 .conversation-error { margin: 0; padding: 0.7rem 1.2rem; background: #fff1f4; color: #93233e; }
+.conversation-heading-actions { display: flex; align-items: center; gap: 1rem; }
+.pause-conversation { min-height: 42px; padding: 0.6rem 0.9rem; }
+.conversation-paused-notice { padding: 0.8rem 1.2rem; display: flex; align-items: center; justify-content: center; gap: 0.65rem; border-bottom: 1px solid #e6cc72; background: #fff9e8; color: var(--navy); font-size: var(--type-small); }
+.conversation-paused-notice span { color: var(--muted); }
+.interviewer-bar.paused { background: #425a73; }
+.live-transcript { border-left-color: var(--twilight); background: #f2f8fc; }
+.live-transcript p { min-height: 1.5em; }
 .recording-save-error { margin: 0; padding: 0.9rem 1.2rem; display: flex; align-items: center; justify-content: space-between; gap: 1rem; border-top: 1px solid #f3c2cf; background: #fff1f4; color: #6f1830; }
 .recording-save-error strong { color: #6f1830; }
 .recording-save-error p { margin-top: 0.15rem; color: #7d3146; font-size: var(--type-small); }
@@ -969,6 +976,9 @@ textarea:focus, input:focus { outline: 2px solid rgba(1, 121, 183, 0.22); border
   .conversation-progress-track small { display: none; }
   .conversation-page .workspace-heading { align-items: flex-start; flex-direction: column; }
   .conversation-page .workspace-heading h1 { margin-bottom: 0; }
+  .conversation-heading-actions { width: 100%; align-items: stretch; flex-direction: column; }
+  .conversation-heading-actions .button, .conversation-heading-actions .text-link { width: 100%; text-align: center; }
+  .conversation-paused-notice { align-items: flex-start; flex-direction: column; }
   .message-stream { height: 46svh; min-height: 300px; }
   .response-composer { padding: 0.9rem 1rem 1rem; position: sticky; bottom: calc(66px + env(safe-area-inset-bottom)); z-index: 12; background: var(--white); box-shadow: 0 -10px 24px rgba(0,31,66,0.07); }
   .voice-first-capture { grid-template-columns: 1fr; }

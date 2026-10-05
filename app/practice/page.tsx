@@ -81,12 +81,16 @@ interface SpeechRecognitionEventLike extends Event {
   readonly results: ArrayLike<SpeechRecognitionResultLike>;
 }
 
+interface SpeechRecognitionErrorEventLike extends Event {
+  readonly error?: string;
+}
+
 interface SpeechRecognitionLike {
   lang: string;
   continuous: boolean;
   interimResults: boolean;
   onresult: ((event: SpeechRecognitionEventLike) => void) | null;
-  onerror: (() => void) | null;
+  onerror: ((event: SpeechRecognitionErrorEventLike) => void) | null;
   onend: (() => void) | null;
   start(): void;
   stop(): void;
@@ -151,6 +155,7 @@ export default function PracticePage() {
   const [recordingUploadRetrying, setRecordingUploadRetrying] = useState(false);
   const [microphoneStarting, setMicrophoneStarting] = useState(false);
   const [microphoneRetryAvailable, setMicrophoneRetryAvailable] = useState(false);
+  const [isPaused, setIsPaused] = useState(false);
   const conversationEnd = useRef<HTMLDivElement>(null);
   const mediaRecorder = useRef<MediaRecorder | null>(null);
   const mediaStream = useRef<MediaStream | null>(null);
@@ -168,9 +173,16 @@ export default function PracticePage() {
   const autoSendPending = useRef(false);
   const submissionLock = useRef(false);
   const pendingRecordingUploadsRef = useRef<PendingRecordingUpload[]>([]);
+  const recordingActive = useRef(false);
+  const recognitionShouldRun = useRef(false);
+  const pausedRef = useRef(false);
+  const recordingPausedAt = useRef(0);
+  const recordingPausedDuration = useRef(0);
 
   const selectedPack = languagePacks.find((definition) => definition.pack.id === selectedPackId) ?? languagePacks[0];
-  const turnState = processingStage === "sending-response"
+  const turnState = isPaused
+    ? { label: "Paused", title: "Conversation paused", detail: "Select Resume Conversation when you are ready to continue." }
+    : processingStage === "sending-response"
     ? { label: "Sending", title: "Sending your response", detail: "Your answer is being submitted once. Please wait." }
     : processingStage === "saving-recording"
     ? { label: "Saving", title: "Saving your recording", detail: "Your answer is saved. We are attaching your voice for replay." }
@@ -201,10 +213,10 @@ export default function PracticePage() {
 
   useEffect(() => { conversationEnd.current?.scrollIntoView({ behavior: "smooth", block: "nearest" }); }, [snapshot?.turns.length, busy]);
   useEffect(() => {
-    if (!isRecording) return;
-    const timer = window.setInterval(() => setRecordingSeconds(Math.floor((Date.now() - recordingStartedAt.current) / 1000)), 500);
+    if (!isRecording || isPaused) return;
+    const timer = window.setInterval(() => setRecordingSeconds(Math.max(0, Math.floor((Date.now() - recordingStartedAt.current - recordingPausedDuration.current) / 1000))), 500);
     return () => window.clearInterval(timer);
-  }, [isRecording]);
+  }, [isRecording, isPaused]);
   useEffect(() => {
     if (!autoSendPending.current || !recordedBlob || recordingFinalizing || isRecording || busy) return;
     const timer = window.setTimeout(() => {
@@ -215,7 +227,7 @@ export default function PracticePage() {
     return () => window.clearTimeout(timer);
   }, [recordedBlob, recordingFinalizing, isRecording, busy, response]);
   useEffect(() => {
-    if (preparationSeconds === null) return;
+    if (preparationSeconds === null || isPaused) return;
     if (preparationSeconds > 0) {
       const timer = window.setTimeout(() => setPreparationSeconds((current) => current === null ? null : current - 1), 1000);
       return () => window.clearTimeout(timer);
@@ -226,9 +238,9 @@ export default function PracticePage() {
       setPreparationSeconds(null);
       if (!preparationCancelled.current) void startRecording();
     });
-  }, [preparationSeconds]);
+  }, [preparationSeconds, isPaused]);
   useEffect(() => {
-    if (!snapshot || completed || countdown !== null || timeExpired) return;
+    if (!snapshot || completed || countdown !== null || timeExpired || isPaused) return;
     const timer = window.setInterval(() => {
       setRemainingSeconds((current) => {
         if (current <= 1) {
@@ -239,8 +251,10 @@ export default function PracticePage() {
       });
     }, 1000);
     return () => window.clearInterval(timer);
-  }, [snapshot, completed, countdown, timeExpired]);
+  }, [snapshot, completed, countdown, timeExpired, isPaused]);
   useEffect(() => () => {
+    recordingActive.current = false;
+    recognitionShouldRun.current = false;
     speechRecognition.current?.stop();
     mediaStream.current?.getTracks().forEach((track) => track.stop());
     if (voiceCheckTimer.current !== null) window.clearInterval(voiceCheckTimer.current);
@@ -252,7 +266,7 @@ export default function PracticePage() {
     pendingRecordingUploadsRef.current.forEach((upload) => URL.revokeObjectURL(upload.localPlaybackUrl));
   }, []);
   useEffect(() => {
-    if (countdown === null || !snapshot) return;
+    if (countdown === null || !snapshot || isPaused) return;
     const timer = window.setTimeout(() => {
       if (countdown > 0) { setCountdown((value) => value === null ? null : value - 1); return; }
       setCountdown(null);
@@ -260,11 +274,15 @@ export default function PracticePage() {
       if (opening) void speakMayaText(opening.text, snapshot.localeTag, cueStudentTurn);
     }, countdown > 0 ? 1000 : 500);
     return () => window.clearTimeout(timer);
-  }, [countdown, snapshot, mayaVoiceMode]);
+  }, [countdown, snapshot, mayaVoiceMode, isPaused]);
   useEffect(() => { pendingRecordingUploadsRef.current = pendingRecordingUploads; }, [pendingRecordingUploads]);
 
   function clearRecording() {
     autoSendPending.current = false;
+    recordingActive.current = false;
+    recognitionShouldRun.current = false;
+    recordingPausedAt.current = 0;
+    recordingPausedDuration.current = 0;
     if (recordedPreviewUrl) URL.revokeObjectURL(recordedPreviewUrl);
     setRecordingFinalizing(false);
     setRecordedBlob(null);
@@ -373,6 +391,47 @@ export default function PracticePage() {
     setResponse(value);
   }
 
+  function startSpeechTranscription() {
+    const Recognition = window.SpeechRecognition ?? window.webkitSpeechRecognition;
+    if (!Recognition) {
+      setVoiceNotice("Live transcription is unavailable in this browser. Your voice is still being recorded.");
+      return;
+    }
+
+    const recognition = new Recognition();
+    const existingText = transcriptText.current.trim();
+    recognition.lang = selectedPack.pack.localeTag;
+    recognition.continuous = true;
+    recognition.interimResults = true;
+    recognition.onresult = (event) => {
+      let currentSegment = "";
+      for (let index = 0; index < event.results.length; index += 1) currentSegment += `${event.results[index][0].transcript} `;
+      const liveText = `${existingText} ${currentSegment}`.trim();
+      updateResponse(liveText);
+      if (liveText) setVoiceDetected(true);
+      setVoiceNotice("Listening… your words are appearing below as you speak.");
+    };
+    recognition.onerror = (event) => {
+      if (event.error === "aborted" || event.error === "no-speech") return;
+      if (event.error === "not-allowed" || event.error === "service-not-allowed" || event.error === "audio-capture") recognitionShouldRun.current = false;
+      setVoiceNotice("Your voice is still being recorded. Live transcription was interrupted, but the recording is safe.");
+    };
+    recognition.onend = () => {
+      if (speechRecognition.current === recognition) speechRecognition.current = null;
+      if (!recordingActive.current || !recognitionShouldRun.current || pausedRef.current) return;
+      window.setTimeout(() => {
+        if (recordingActive.current && recognitionShouldRun.current && !pausedRef.current && !speechRecognition.current) startSpeechTranscription();
+      }, 200);
+    };
+    speechRecognition.current = recognition;
+    try {
+      recognition.start();
+    } catch {
+      speechRecognition.current = null;
+      setVoiceNotice("Your voice is still being recorded. Live transcription could not restart on this device.");
+    }
+  }
+
   async function startRecording() {
     if (!canRecord || isMayaSpeaking) return;
     setError(""); setMicrophoneStarting(true); setMicrophoneRetryAvailable(false);
@@ -386,6 +445,7 @@ export default function PracticePage() {
       const levels = new Uint8Array(analyser.fftSize);
       audioContext.current = context;
       voiceCheckTimer.current = window.setInterval(() => {
+        if (pausedRef.current) return;
         analyser.getByteTimeDomainData(levels);
         let energy = 0;
         for (const level of levels) {
@@ -417,28 +477,14 @@ export default function PracticePage() {
       mediaStream.current = stream;
       mediaRecorder.current = recorder;
       recordingStartedAt.current = Date.now();
-      const Recognition = window.SpeechRecognition ?? window.webkitSpeechRecognition;
-      if (Recognition) {
-        const recognition = new Recognition();
-        recognition.lang = selectedPack.pack.localeTag;
-        recognition.continuous = true;
-        recognition.interimResults = true;
-        recognition.onresult = (event) => {
-          let spokenText = "";
-          for (let index = 0; index < event.results.length; index += 1) spokenText += `${event.results[index][0].transcript} `;
-          updateResponse(spokenText.trim());
-          if (spokenText.trim()) setVoiceDetected(true);
-          setVoiceNotice("Listening… speak naturally. The transcript is created automatically.");
-        };
-        recognition.onerror = () => setVoiceNotice("Your voice is still being recorded. You can send it even if an automatic transcript is unavailable.");
-        recognition.onend = () => { speechRecognition.current = null; };
-        speechRecognition.current = recognition;
-        recognition.start();
-      } else {
-        setVoiceNotice("Automatic transcription is unavailable here. Your recording can still be sent and saved.");
-      }
       recorder.start(1000);
+      recordingActive.current = true;
+      recognitionShouldRun.current = true;
+      pausedRef.current = false;
+      recordingPausedAt.current = 0;
+      recordingPausedDuration.current = 0;
       setIsRecording(true);
+      startSpeechTranscription();
     } catch {
       setMicrophoneRetryAvailable(true);
       setError("Microphone access is unavailable. Allow microphone access, then try connecting it again.");
@@ -448,6 +494,8 @@ export default function PracticePage() {
   }
 
   function stopRecording() {
+    recordingActive.current = false;
+    recognitionShouldRun.current = false;
     speechRecognition.current?.stop();
     if (mediaRecorder.current?.state === "recording") {
       autoSendPending.current = true;
@@ -459,13 +507,39 @@ export default function PracticePage() {
       voiceCheckTimer.current = null;
     }
     closeRecorderAudioContext();
-    setRecordingSeconds(Math.max(1, Math.floor((Date.now() - recordingStartedAt.current) / 1000)));
+    setRecordingSeconds(Math.max(1, Math.floor((Date.now() - recordingStartedAt.current - recordingPausedDuration.current) / 1000)));
     setIsRecording(false);
     const detected = Boolean(transcriptText.current.trim()) || voicedSamples.current >= 3;
     setVoiceDetected(detected);
     setVoiceNotice(detected
       ? "Recording complete. Your response is being sent automatically."
       : "Recording complete. Maya may ask you to repeat if no speech can be understood.");
+  }
+
+  function toggleConversationPause() {
+    if (!snapshot || completed || busy || recordingFinalizing || microphoneStarting) return;
+    if (!isPaused) {
+      pausedRef.current = true;
+      setIsPaused(true);
+      if (isMayaSpeaking) window.speechSynthesis?.pause();
+      if (isRecording) {
+        recordingPausedAt.current = Date.now();
+        if (mediaRecorder.current?.state === "recording") mediaRecorder.current.pause();
+        speechRecognition.current?.stop();
+      }
+      return;
+    }
+
+    pausedRef.current = false;
+    setIsPaused(false);
+    if (isMayaSpeaking) window.speechSynthesis?.resume();
+    if (isRecording) {
+      if (recordingPausedAt.current) recordingPausedDuration.current += Date.now() - recordingPausedAt.current;
+      recordingPausedAt.current = 0;
+      if (mediaRecorder.current?.state === "paused") mediaRecorder.current.resume();
+      recognitionShouldRun.current = true;
+      startSpeechTranscription();
+    }
   }
 
   function replayTurn(turn: ConversationTurn) {
@@ -572,6 +646,8 @@ export default function PracticePage() {
     setProcessingStage(null);
     setMicrophoneStarting(false);
     setMicrophoneRetryAvailable(false);
+    setIsPaused(false);
+    pausedRef.current = false;
     setCountdown(null);
     completionCelebrated.current = false;
     Object.values(playbackUrls).filter((url) => url.startsWith("blob:")).forEach((url) => URL.revokeObjectURL(url));
@@ -648,13 +724,14 @@ export default function PracticePage() {
     autoSendPending.current = false;
     const responseBlob = recordedBlob;
     const responseDurationMs = recordingSeconds * 1000;
-    const learnerText = response.trim() || "[Spoken response recorded. Automatic transcript unavailable.]";
+    const responseText = transcriptText.current.trim() || response.trim();
+    const learnerText = responseText || "[Spoken response recorded. Automatic transcript unavailable.]";
     updateResponse(""); setBusy(true); setCanRecord(false); setError(""); setProcessingStage("sending-response");
     try {
       const request = await fetch("/api/practice", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ action: "respond", sessionId: snapshot.sessionId, storageMode, text: response.trim(), hasRecording: true, completeAfterResponse: timeExpired || isQuestionPreview, practiceMinutes, remainingSeconds }),
+        body: JSON.stringify({ action: "respond", sessionId: snapshot.sessionId, storageMode, text: responseText, hasRecording: true, completeAfterResponse: timeExpired || isQuestionPreview, practiceMinutes, remainingSeconds }),
       });
       const data = await request.json() as { error?: string; turns: ConversationTurn[]; completed?: boolean };
       if (!request.ok) throw new Error(data.error ?? "Could not save your response.");
@@ -712,6 +789,7 @@ export default function PracticePage() {
       const data = await request.json() as { error?: string; completed?: boolean; turns?: ConversationTurn[] };
       if (!request.ok) throw new Error(data.error ?? "Could not finish this practice.");
       const closingTurns = data.turns ?? [];
+      setIsPaused(false); pausedRef.current = false; window.speechSynthesis?.resume();
       setCompleted(true); setSnapshot((current) => current ? { ...current, status: "completed", turns: [...current.turns, ...closingTurns] } : current);
       speakCoachTurn(closingTurns.find((turn) => turn.role === "coach"), playCompletionClap);
     } catch (caught) { setError(caught instanceof Error ? caught.message : "Could not finish this practice."); }
@@ -816,7 +894,10 @@ export default function PracticePage() {
           <h1>Conversation with Maya</h1>
           <p>Listen to Maya&apos;s question, then answer naturally in your own words.</p>
         </div>
-        {!completed && !isQuestionPreview && <button className="text-link" onClick={confirmEndConversation} disabled={busy || recordingFinalizing || isRecording} title={isRecording ? "Send your current response before ending the conversation." : undefined}>End Conversation</button>}
+        {!completed && <div className="conversation-heading-actions">
+          <button className={isPaused ? "button button-gold pause-conversation" : "button button-quiet pause-conversation"} type="button" onClick={toggleConversationPause} disabled={busy || recordingFinalizing || microphoneStarting}>{isPaused ? "Resume Conversation" : "Pause Conversation"}</button>
+          {!isQuestionPreview && <button className="text-link" onClick={confirmEndConversation} disabled={busy || recordingFinalizing || isRecording} title={isRecording ? "Send your current response before ending the conversation." : undefined}>End Conversation</button>}
+        </div>}
       </div>
       <div className="conversation-layout">
         {countdown !== null ? (
@@ -827,7 +908,7 @@ export default function PracticePage() {
           </section>
         ) : (
         <section className="conversation-card" aria-label="Practice conversation">
-          <div className={isMayaSpeaking ? "interviewer-bar speaking" : "interviewer-bar"}>
+          <div className={isPaused ? "interviewer-bar paused" : isMayaSpeaking ? "interviewer-bar speaking" : "interviewer-bar"}>
             <span className="interviewer-avatar">M</span>
             <span><strong>Maya</strong></span>
             <time className={timeExpired ? "conversation-timer expired" : "conversation-timer"} dateTime={`PT${remainingSeconds}S`} aria-live="polite">
@@ -835,15 +916,16 @@ export default function PracticePage() {
             </time>
             <span className="speaking-status" role="status" aria-live="polite">
               <span className="speaking-bars" aria-hidden="true"><i /><i /><i /></span>
-              {isMayaSpeaking ? "Maya is speaking" : canRecord ? "Your turn" : "Wait for the beep"}
+              {isPaused ? "Conversation paused" : isMayaSpeaking ? "Maya is speaking" : canRecord ? "Your turn" : "Wait for the beep"}
             </span>
           </div>
+          {isPaused && <div className="conversation-paused-notice" role="status"><strong>Conversation paused</strong><span>Maya, the timer, and your recording will continue when you select Resume Conversation.</span></div>}
           <div className="message-stream" aria-live="polite">
             {snapshot.turns.map((turn) => {
               const coachTextHidden = turn.role === "coach" && !revealedCoachTurns.includes(turn.id);
               return <div className={`message-row ${turn.role}`} key={turn.id}>
                 <span className="message-speaker">{turn.role === "coach" ? "Maya" : "You"}</span>
-                <div className={coachTextHidden ? "message-bubble audio-question" : "message-bubble"}><p>{coachTextHidden ? "Listen to Maya’s question" : turn.text}</p>{turn.role === "learner" && playbackUrls[turn.id] && <audio className="inline-audio" controls src={playbackUrls[turn.id]} preload="metadata" />}<div className="message-meta"><button type="button" disabled={isRecording || busy || recordingFinalizing || isMayaSpeaking} onClick={() => replayTurn(turn)}>{turn.role === "learner" && playbackUrls[turn.id] ? "Replay my voice" : "Listen Again"}</button>{coachTextHidden && <button type="button" onClick={() => setRevealedCoachTurns((current) => [...current, turn.id])}>Show Words</button>}</div></div>
+                <div className={coachTextHidden ? "message-bubble audio-question" : "message-bubble"}><p>{coachTextHidden ? "Listen to Maya’s question" : turn.text}</p>{turn.role === "learner" && playbackUrls[turn.id] && <audio className="inline-audio" controls src={playbackUrls[turn.id]} preload="metadata" />}<div className="message-meta"><button type="button" disabled={isRecording || busy || recordingFinalizing || isMayaSpeaking || isPaused} onClick={() => replayTurn(turn)}>{turn.role === "learner" && playbackUrls[turn.id] ? "Replay my voice" : "Listen Again"}</button>{coachTextHidden && <button type="button" onClick={() => setRevealedCoachTurns((current) => [...current, turn.id])}>Show Words</button>}</div></div>
               </div>;
             })}
             {busy && !completed && <div className="message-row coach"><span className="message-speaker">Maya</span><div className="message-bubble thinking"><span /><span /><span /><p>{processingStage === "saving-recording" ? "Saving your recording…" : processingStage === "maya-responding" ? "Preparing the next question…" : "Receiving your response…"}</p></div></div>}
@@ -869,7 +951,7 @@ export default function PracticePage() {
                 <div><strong>{turnState.title}</strong><p>{turnState.detail}</p></div>
               </div>
               <div className={isRecording ? "voice-capture voice-first-capture recording" : preparationSeconds !== null ? "voice-capture voice-first-capture preparing" : "voice-capture voice-first-capture"}>
-                <button type="button" className={isRecording ? "record-button active" : "record-button"} onClick={isRecording ? stopRecording : microphoneRetryAvailable ? () => void startRecording() : undefined} disabled={busy || microphoneStarting || (!isRecording && !microphoneRetryAvailable)}>
+                <button type="button" className={isRecording ? "record-button active" : "record-button"} onClick={isRecording ? stopRecording : microphoneRetryAvailable ? () => void startRecording() : undefined} disabled={isPaused || busy || microphoneStarting || (!isRecording && !microphoneRetryAvailable)}>
                   <span className="microphone-mark" aria-hidden="true">{isRecording ? "■" : "●"}</span>
                   <span>{isRecording ? "Send Response" : microphoneStarting ? "Connecting microphone…" : microphoneRetryAvailable ? "Try Microphone Again" : preparationSeconds !== null ? `Starting in ${preparationSeconds}` : recordedBlob ? "Sending response" : "Waiting for Maya"}</span>
                 </button>
@@ -877,7 +959,8 @@ export default function PracticePage() {
                 {recordedPreviewUrl && !isRecording && <div className="voice-preview"><audio controls src={recordedPreviewUrl} /></div>}
                 <label className="save-voice-toggle"><input type="checkbox" checked={recordingConsent} onChange={(event) => setRecordingConsent(event.target.checked)} disabled={busy} /><span>Keep my voice recording for replay</span></label>
               </div>
-              {response.trim() && <div id="practice-response" className="transcript-preview" role="status" aria-live="polite"><span>What Maya heard</span><p>{response}</p></div>}
+              {isRecording && <div id="practice-response" className="transcript-preview live-transcript" role="status" aria-live="polite"><span>Live transcript</span><p>{response.trim() || "Listening for your response…"}</p></div>}
+              {!isRecording && response.trim() && <div id="practice-response" className="transcript-preview" role="status" aria-live="polite"><span>What Maya heard</span><p>{response}</p></div>}
               {recordedBlob && voiceDetected && !response.trim() && <div id="practice-response" className="transcript-preview quiet" role="status"><span>Transcript unavailable</span><p>Your voice is recorded. Maya may ask you to repeat if the words cannot be understood.</p></div>}
               <div className="composer-footer">{recordedBlob && <button type="submit" className="button button-gold" disabled={busy || isRecording || preparationSeconds !== null || recordingFinalizing || submissionLock.current}>{busy ? "Sending…" : "Send Response"}</button>}</div>
             </form>
