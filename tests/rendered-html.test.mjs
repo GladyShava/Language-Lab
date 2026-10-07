@@ -231,6 +231,15 @@ test("shared navigation uses only the approved information architecture", async 
   assert.doesNotMatch(source, /label: "Practice"|label: "Replay"|label: "Fluent Example"|label: "My Progress"|Start practice/i);
 });
 
+test("keeps core navigation and conversation controls usable on phones", async () => {
+  const styles = await readFile(new URL("../app/globals.css", import.meta.url), "utf8");
+  assert.match(styles, /@media \(max-width: 680px\)[\s\S]*grid-template-columns: repeat\(2, 1fr\)/i);
+  assert.match(styles, /\.interviewer-bar \{[^}]*grid-template-columns: auto minmax\(0, 1fr\) auto/i);
+  assert.match(styles, /\.response-composer \{[^}]*max-height: min\(52dvh, 470px\)[^}]*overflow-y: auto/i);
+  assert.match(styles, /\.live-transcript p \{[^}]*max-height: 5\.5rem/i);
+  assert.match(styles, /@media \(max-width: 380px\)/i);
+});
+
 test("builds student-specific progress from completed conversations", async () => {
   const worker = await loadWorker("progress-history");
   const participantKey = "progress-student";
