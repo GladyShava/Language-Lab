@@ -2,7 +2,10 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { rubricDimensionDefinitions, type AdaptiveRubricProfile } from "@/lib/conversation/adaptive-rubric";
+import { evaluateAdaptiveConversation, rubricDimensionDefinitions, type AdaptiveRubricProfile } from "@/lib/conversation/adaptive-rubric";
+import { readPracticeBackup, savePracticeBackup } from "@/lib/practice/recovery";
+import type { PracticeSnapshot } from "@/lib/practice/store";
+import { readLocalRecording } from "@/lib/practice/local-recordings";
 import { getDefaultLanguagePackDefinition, getLanguagePackDefinition } from "@/lib/language-packs/registry";
 
 const defaultLanguagePack = getDefaultLanguagePackDefinition();
@@ -35,6 +38,8 @@ export default function TranscriptPage() {
   const [languagePackId, setLanguagePackId] = useState(defaultLanguagePack.pack.id);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const playbackRun = useRef(0);
+  const reportSnapshot = useRef<PracticeSnapshot | null>(null);
+  const localPlaybackUrls = useRef<string[]>([]);
   const languagePack = getLanguagePackDefinition(languagePackId) ?? defaultLanguagePack;
 
   useEffect(() => {
@@ -55,22 +60,35 @@ export default function TranscriptPage() {
       return;
     }
     setLoading(true);
+    const backup = readPracticeBackup(sessionId);
 
     Promise.all([
       fetch(`/api/practice?sessionId=${encodeURIComponent(sessionId)}&mode=${encodeURIComponent(mode)}`).then(async (response) => {
         if (!response.ok) throw new Error("Session unavailable");
         return await response.json() as {
-          snapshot: { title: string; languagePackId: string; turns: Array<{ id: string; role: "coach" | "learner"; text: string; occurredAt: string }> };
+          snapshot: PracticeSnapshot;
           rubricProfile: AdaptiveRubricProfile;
         };
-      }),
+      }).then(data => backup && (backup.snapshot.turns.length > data.snapshot.turns.length || backup.snapshot.status === "completed" && data.snapshot.status !== "completed")
+        ? { snapshot: backup.snapshot, rubricProfile: evaluateAdaptiveConversation(backup.snapshot.turns, backup.snapshot.localeTag) } : data)
+        .catch(error => {
+          if (!backup) throw error;
+          setLoadNote("Your conversation was recovered from this device. Your transcript and report are available.");
+          return { snapshot: backup.snapshot, rubricProfile: evaluateAdaptiveConversation(backup.snapshot.turns, backup.snapshot.localeTag) };
+        }),
       fetch(`/api/practice/recording?sessionId=${encodeURIComponent(sessionId)}&mode=${encodeURIComponent(mode)}`).then(async (response) => {
         if (!response.ok) return { recordings: [] };
         return await response.json() as { recordings: Array<{ messageId: string; playbackUrl: string }> };
-      }),
-    ]).then(([sessionData, recordingData]) => {
+      }).catch(() => ({ recordings: [] })),
+    ]).then(async ([sessionData, recordingData]) => {
       const started = new Date(sessionData.snapshot.turns[0]?.occurredAt ?? Date.now()).getTime();
       const recordingUrls = new Map(recordingData.recordings.map((recording) => [recording.messageId, recording.playbackUrl]));
+      await Promise.all(sessionData.snapshot.turns.filter(turn => turn.role === "learner").map(async turn => {
+        const blob = await readLocalRecording(sessionData.snapshot.sessionId, turn.id).catch(() => null);
+        if (!blob) return;
+        const url = URL.createObjectURL(blob); localPlaybackUrls.current.push(url);
+        recordingUrls.set(turn.id, url);
+      }));
       const lines = sessionData.snapshot.turns.map((turn) => {
         const elapsed = Math.max(0, Math.round((new Date(turn.occurredAt).getTime() - started) / 1000));
         return {
@@ -82,6 +100,8 @@ export default function TranscriptPage() {
         } satisfies TranscriptLine;
       });
       setCommunityHref(`/community?sessionId=${encodeURIComponent(sessionId)}&mode=${encodeURIComponent(mode)}`);
+      reportSnapshot.current = sessionData.snapshot;
+      savePracticeBackup({ ...backup, snapshot: sessionData.snapshot, mode: mode === "d1" ? "d1" : "memory" });
       setReportHref(`/api/practice/report?sessionId=${encodeURIComponent(sessionId)}&mode=${encodeURIComponent(mode)}`);
       setSessionTitle(sessionData.snapshot.title);
       setLanguagePackId(sessionData.snapshot.languagePackId);
@@ -94,7 +114,7 @@ export default function TranscriptPage() {
       .finally(() => setLoading(false));
   }, []);
 
-  useEffect(() => () => { window.speechSynthesis.cancel(); audioRef.current?.pause(); }, []);
+  useEffect(() => () => { window.speechSynthesis?.cancel(); audioRef.current?.pause(); localPlaybackUrls.current.forEach(url => URL.revokeObjectURL(url)); }, []);
 
   const visible = useMemo(() => transcript.filter((line) => {
     const matchesFilter = filter === "all" || line.role === filter;
@@ -158,8 +178,13 @@ export default function TranscriptPage() {
     setDownloadingReport(true);
     setReportNote("");
     try {
-      const response = await fetch(reportHref);
+      let response: Response;
+      try { response = await fetch(reportHref); } catch { response = new Response(null, { status: 503 }); }
+      if (!response.ok && reportSnapshot.current?.status === "completed") {
+        response = await fetch("/api/practice/report", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ snapshot: reportSnapshot.current }) });
+      }
       if (!response.ok) throw new Error("Report unavailable");
+      if (!response.headers.get("content-type")?.includes("application/pdf")) throw new Error("Invalid report format");
       const blobUrl = URL.createObjectURL(await response.blob());
       const disposition = response.headers.get("content-disposition") ?? "";
       const filename = disposition.match(/filename="?([^";]+)"?/i)?.[1] ?? "beyond-hello-practice-report.pdf";

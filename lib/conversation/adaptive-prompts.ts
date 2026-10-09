@@ -17,19 +17,6 @@ export const adaptiveStageBehaviors: Record<AdaptiveStage, AdaptiveStageBehavior
   Advanced: { sentenceComplexity: "layered", vocabularyRichness: "nuanced", followUpPressure: 5, ambiguity: 5, discourseMove: "negotiate" },
 };
 
-function vocabularyBridge(response: string): string {
-  const substitutions: Array<[RegExp, string]> = [
-    [/\bhelp(?:ing|s|ed)?\b/i, "supporting others"],
-    [/\bvery important\b/i, "significant"],
-    [/\bgood opportunity\b/i, "valuable opportunity"],
-    [/\bmany different\b/i, "a diverse range of"],
-    [/\bbig change\b/i, "major shift"],
-    [/\bproblem\b/i, "challenge"],
-  ];
-  const found = substitutions.find(([pattern]) => pattern.test(response));
-  return found ? `You mentioned ${found[1]}. ` : "";
-}
-
 const promptTemplates: Record<AdaptiveStage, Record<InterviewStage, string>> = {
   Emerging: {
     warmup: "What do you like doing in your free time? Tell me one reason.",
@@ -73,9 +60,8 @@ const promptTemplates: Record<AdaptiveStage, Record<InterviewStage, string>> = {
   },
 };
 
-export function createAdaptivePrompt(stage: InterviewStage, profile: AdaptiveRubricProfile, latestResponse: string): string {
-  const bridge = profile.currentStage === "Emerging" || profile.currentStage === "Developing" ? "" : vocabularyBridge(latestResponse);
-  return `${bridge}${promptTemplates[profile.currentStage][stage]}`;
+export function createAdaptivePrompt(stage: InterviewStage, profile: AdaptiveRubricProfile): string {
+  return promptTemplates[profile.currentStage][stage];
 }
 
 interface ConversationAnchor {
@@ -182,13 +168,19 @@ export function createConnectedAdaptivePrompt(
   stage: InterviewStage,
   profile: AdaptiveRubricProfile,
   latestResponse: string,
+  transcript: readonly { role: string; text: string }[] = [],
 ): string {
-  if (stage === "wrap") return createAdaptivePrompt(stage, profile, latestResponse);
-  const anchor = findConversationAnchor(latestResponse);
+  if (stage === "wrap") return createAdaptivePrompt(stage, profile);
+  const earlier = transcript.filter(turn => turn.role === "learner").slice(0, -1).reverse().find(turn => findConversationAnchor(turn.text));
+  const anchor = findConversationAnchor(latestResponse)
+    ?? (/^(?:it|that|this|they|yes|no)\b/i.test(latestResponse) && earlier ? findConversationAnchor(earlier.text) : null);
   const answerLead = answerStudentQuestion(latestResponse);
-  if (!anchor) return `${answerLead}${createAdaptivePrompt(stage, profile, latestResponse)}`.replace(/\s+/g, " ").trim();
+  if (!anchor) {
+    const detail = latestResponse.split(/[.!?]/)[0].trim().slice(0, 100);
+    const task = stage === "story" ? "What happened in a specific experience connected to" : stage === "opinion" ? "What matters most to you about" : "What would you like me to understand about";
+    return `${answerLead}${task} “${detail}”?`;
+  }
   const behavior = adaptiveStageBehaviors[profile.currentStage];
-  const bridge = profile.currentStage === "Emerging" || profile.currentStage === "Developing" ? "" : vocabularyBridge(latestResponse);
   let prompt: string;
 
   if (stage === "role_play") {
@@ -213,7 +205,7 @@ export function createConnectedAdaptivePrompt(
       : `What part of ${anchor.topic} has influenced you most, and why?`;
   }
 
-  return `${answerLead}${anchor.reference} ${bridge}${prompt}`.replace(/\s+/g, " ").trim();
+  return `${answerLead}${prompt}`.replace(/\s+/g, " ").trim();
 }
 
 export function adjustInterviewStage(stage: InterviewStage, coachingStage: AdaptiveStage): InterviewStage {
@@ -226,7 +218,7 @@ export function adjustInterviewStage(stage: InterviewStage, coachingStage: Adapt
 export function createPersonalizedAdaptiveFollowUp(profile: AdaptiveRubricProfile, latestResponse: string): string | null {
   const normalized = latestResponse.toLocaleLowerCase();
   const behavior = adaptiveStageBehaviors[profile.currentStage];
-  const bridge = vocabularyBridge(latestResponse);
+  const bridge = "";
   const answerLead = answerStudentQuestion(latestResponse);
   if (/\b(work|job|career|company|student|study|school|university)\b/i.test(normalized)) {
     if (behavior.followUpPressure <= 2) return `${answerLead}What do you enjoy most about your work or studies, and why?`;
@@ -234,9 +226,9 @@ export function createPersonalizedAdaptiveFollowUp(profile: AdaptiveRubricProfil
     return `${answerLead}${bridge}How do your current work or studies compare with what you expected, and which trade-off has been most important?`;
   }
   if (mentionsPlace(latestResponse)) {
-    if (behavior.followUpPressure <= 2) return `${answerLead}How has the place you come from influenced you?`;
-    if (behavior.followUpPressure === 3) return `${answerLead}${bridge}Give me an example of how that place has influenced a choice you made.`;
-    return `${answerLead}${bridge}Which part of that influence would you preserve, and which part would you reconsider?`;
+    if (behavior.followUpPressure <= 2) return `${answerLead}What is daily life like in the place you described?`;
+    if (behavior.followUpPressure === 3) return `${answerLead}What makes that place important to you? Tell me about a specific experience there.`;
+    return `${answerLead}What would you preserve about that place, and what would you change?`;
   }
   if (/\b(family|mother|father|parent|sister|brother)\b/i.test(normalized)) {
     if (behavior.followUpPressure <= 2) return `${answerLead}Can you share one way your family has influenced your values?`;

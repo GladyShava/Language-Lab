@@ -5,6 +5,8 @@ import { FormEvent, useEffect, useRef, useState } from "react";
 import type { ConversationTurn } from "@/lib/conversation/types";
 import { defaultLanguagePackId, listLanguagePackDefinitions } from "@/lib/language-packs/registry";
 import type { PracticeStorageMode } from "@/lib/practice/store";
+import { readPracticeBackup, savePracticeBackup } from "@/lib/practice/recovery";
+import { readLocalRecording, saveLocalRecording } from "@/lib/practice/local-recordings";
 
 const languagePacks = listLanguagePackDefinitions();
 
@@ -181,6 +183,50 @@ export default function PracticePage() {
   const mayaAudio = useRef<HTMLAudioElement | null>(null);
   const mayaAudioCache = useRef(new Map<string, string>());
   const mayaSpeechRun = useRef(0);
+  const snapshotRef = useRef<PracticeSnapshot | null>(null);
+  const finishing = useRef(false);
+  const recordingStopped = useRef<((blob: Blob) => void) | null>(null);
+  const lastRecordedBlob = useRef<Blob | null>(null);
+  const transcriptionFinished = useRef<Promise<void>>(Promise.resolve());
+  const responseAttemptId = useRef<string | undefined>(undefined);
+
+  function rememberSnapshot(next: PracticeSnapshot, mode = storageMode, pendingResponse?: string) {
+    snapshotRef.current = next;
+    setSnapshot(next);
+    if (!savePracticeBackup({ snapshot: next, mode, firstName: sessionIdentity?.firstName, participantKey: sessionIdentity?.participantKey, practiceMinutes, remainingSeconds, pendingResponse, pendingResponseId: pendingResponse ? responseAttemptId.current : undefined })) {
+      setRecordingSaveError("This browser could not save a recovery copy. Keep this tab open until you download your report.");
+    }
+  }
+
+  useEffect(() => {
+    const backup = readPracticeBackup();
+    if (!backup || backup.snapshot.status === "completed") return;
+    snapshotRef.current = backup.snapshot;
+    setSnapshot(backup.snapshot); setStorageMode(backup.mode);
+    setSessionIdentity({ firstName: backup.firstName ?? "there", participantKey: backup.participantKey ?? crypto.randomUUID() });
+    setSelectedPackId(backup.snapshot.languagePackId);
+    setPracticeMinutes(backup.practiceMinutes ?? 5); setRemainingSeconds(backup.remainingSeconds ?? 300);
+    setMayaVoiceMode(typeof window.Audio !== "undefined" ? "api" : "text");
+    pausedRef.current = true; setIsPaused(true); setCanRecord(true); setPreparationSeconds(10);
+    setRevealedCoachTurns(backup.snapshot.turns.filter(turn => turn.role === "coach").map(turn => turn.id));
+    if (backup.pendingResponse) {
+      responseAttemptId.current = backup.pendingResponseId;
+      updateResponse(backup.pendingResponse);
+      void readLocalRecording(backup.snapshot.sessionId, "pending").then(blob => {
+        if (!blob) return;
+        lastRecordedBlob.current = blob; setRecordedBlob(blob); setVoiceDetected(true);
+        setRecordedPreviewUrl(URL.createObjectURL(blob)); setPreparationSeconds(null);
+      }).catch(() => undefined);
+    }
+    setError("Your conversation was recovered on this device. Resume when you are ready, or end it to view your report.");
+  }, []);
+
+  useEffect(() => {
+    const current = snapshotRef.current;
+    if (!current) return;
+    const previous = readPracticeBackup(current.sessionId);
+    savePracticeBackup({ ...previous, snapshot: current, mode: storageMode, firstName: sessionIdentity?.firstName, participantKey: sessionIdentity?.participantKey, practiceMinutes, remainingSeconds });
+  }, [remainingSeconds, practiceMinutes, storageMode, sessionIdentity]);
 
   const selectedPack = languagePacks.find((definition) => definition.pack.id === selectedPackId) ?? languagePacks[0];
   const turnState = isPaused
@@ -221,27 +267,28 @@ export default function PracticePage() {
     return () => window.clearInterval(timer);
   }, [isRecording, isPaused]);
   useEffect(() => {
-    if (!autoSendPending.current || !recordedBlob || recordingFinalizing || isRecording || busy) return;
+    if (!autoSendPending.current || !recordedBlob || recordingFinalizing || isRecording || busy || finishing.current || isPaused) return;
     const timer = window.setTimeout(() => {
       if (!autoSendPending.current) return;
       autoSendPending.current = false;
       void submitResponse();
     }, 350);
     return () => window.clearTimeout(timer);
-  }, [recordedBlob, recordingFinalizing, isRecording, busy, response]);
+  }, [recordedBlob, recordingFinalizing, isRecording, busy, response, isPaused]);
   useEffect(() => {
-    if (preparationSeconds === null || isPaused) return;
+    if (preparationSeconds === null || isPaused || completed || finishing.current) return;
     if (preparationSeconds > 0) {
-      const timer = window.setTimeout(() => setPreparationSeconds((current) => current === null ? null : current - 1), 1000);
+      const timer = window.setTimeout(() => { if (!pausedRef.current && !finishing.current) setPreparationSeconds((current) => current === null ? null : current - 1); }, 1000);
       return () => window.clearTimeout(timer);
     }
     if (preparationTriggered.current) return;
     preparationTriggered.current = true;
     void playRecordingStartBeep().then(() => {
       setPreparationSeconds(null);
-      if (!preparationCancelled.current) void startRecording();
+      if (pausedRef.current) { preparationTriggered.current = false; setPreparationSeconds(0); return; }
+      if (!preparationCancelled.current && !finishing.current) void startRecording();
     });
-  }, [preparationSeconds, isPaused]);
+  }, [preparationSeconds, isPaused, completed]);
   useEffect(() => {
     if (!snapshot || completed || countdown !== null || timeExpired || isPaused) return;
     const timer = window.setInterval(() => {
@@ -286,6 +333,7 @@ export default function PracticePage() {
   useEffect(() => { pendingRecordingUploadsRef.current = pendingRecordingUploads; }, [pendingRecordingUploads]);
 
   function clearRecording() {
+    lastRecordedBlob.current = null;
     autoSendPending.current = false;
     recordingActive.current = false;
     recognitionShouldRun.current = false;
@@ -336,6 +384,7 @@ export default function PracticePage() {
   }
 
   function cueStudentTurn() {
+    if (finishing.current || snapshotRef.current?.status === "completed") return;
     clearRecording();
     updateResponse("");
     setError("");
@@ -425,6 +474,7 @@ export default function PracticePage() {
         onFinished?.();
       };
       window.speechSynthesis.speak(utterance);
+      if (pausedRef.current) window.speechSynthesis.pause();
     });
   }
 
@@ -506,10 +556,11 @@ export default function PracticePage() {
   }
 
   async function startRecording() {
-    if (!canRecord || isMayaSpeaking) return;
+    if (!canRecord || isMayaSpeaking || pausedRef.current || finishing.current) return;
     setError(""); setMicrophoneStarting(true); setMicrophoneRetryAvailable(false);
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      if (pausedRef.current || finishing.current) { stream.getTracks().forEach(track => track.stop()); return; }
       voicedSamples.current = 0;
       const context = new AudioContext();
       const analyser = context.createAnalyser();
@@ -540,12 +591,18 @@ export default function PracticePage() {
       }
       audioChunks.current = [];
       recorder.ondataavailable = (event) => { if (event.data.size) audioChunks.current.push(event.data); };
-      recorder.onstop = () => {
+      recorder.onstop = async () => {
+        await transcriptionFinished.current;
         const blob = new Blob(audioChunks.current, { type: recorder.mimeType });
+        if (recordingConsent && snapshotRef.current) await saveLocalRecording(snapshotRef.current.sessionId, "pending", blob).catch(() => {
+          setRecordingSaveError("This recording could not be backed up on your device. Keep this tab open while saving it.");
+        });
+        lastRecordedBlob.current = blob;
         setRecordedBlob(blob);
         setRecordedPreviewUrl(URL.createObjectURL(blob));
         setRecordingFinalizing(false);
         stream.getTracks().forEach((track) => track.stop());
+        recordingStopped.current?.(blob); recordingStopped.current = null;
       };
       mediaStream.current = stream;
       mediaRecorder.current = recorder;
@@ -569,9 +626,19 @@ export default function PracticePage() {
   function stopRecording() {
     recordingActive.current = false;
     recognitionShouldRun.current = false;
-    speechRecognition.current?.stop();
-    if (mediaRecorder.current?.state === "recording") {
-      autoSendPending.current = true;
+    const recognition = speechRecognition.current;
+    transcriptionFinished.current = recognition ? new Promise<void>(resolve => {
+      const originalEnd = recognition.onend;
+      const timeout = window.setTimeout(resolve, 1500);
+      recognition.onend = () => { originalEnd?.(); window.clearTimeout(timeout); resolve(); };
+      try { recognition.stop(); } catch { window.clearTimeout(timeout); resolve(); }
+    }) : Promise.resolve();
+    if (recordingPausedAt.current) {
+      recordingPausedDuration.current += Date.now() - recordingPausedAt.current;
+      recordingPausedAt.current = 0;
+    }
+    if (mediaRecorder.current && mediaRecorder.current.state !== "inactive") {
+      autoSendPending.current = !finishing.current;
       setRecordingFinalizing(true);
       mediaRecorder.current.stop();
     }
@@ -594,7 +661,7 @@ export default function PracticePage() {
     if (!isPaused) {
       pausedRef.current = true;
       setIsPaused(true);
-      if (isMayaSpeaking) {
+      if (isMayaSpeaking || mayaAudio.current) {
         mayaAudio.current?.pause();
         window.speechSynthesis?.pause();
       }
@@ -608,7 +675,7 @@ export default function PracticePage() {
 
     pausedRef.current = false;
     setIsPaused(false);
-    if (isMayaSpeaking) {
+    if (isMayaSpeaking || mayaAudio.current) {
       if (mayaAudio.current?.paused) void mayaAudio.current.play().catch(() => undefined);
       else window.speechSynthesis?.resume();
     }
@@ -761,7 +828,7 @@ export default function PracticePage() {
       setCanRecord(false);
       setPreparationSeconds(null);
       setRemainingSeconds(practiceMinutes * 60); setTimeExpired(false); setRecordingFinalizing(false);
-      setSnapshot(data.snapshot); setStorageMode(data.storageMode); setCompleted(false); setCountdown(3); setError(voiceError);
+      rememberSnapshot(data.snapshot, data.storageMode); setStorageMode(data.storageMode); setCompleted(false); setCountdown(3); setError(voiceError);
       if (!preview) window.localStorage.setItem("opi_last_session", JSON.stringify({ sessionId: data.snapshot.sessionId, mode: data.storageMode }));
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "Could not start practice.");
@@ -797,27 +864,32 @@ export default function PracticePage() {
     setSetupStep((current) => current === 1 ? 2 : 3);
   }
 
-  async function submitResponse() {
-    if (!snapshot || !recordedBlob || busy || isRecording || recordingFinalizing || submissionLock.current) return;
+  async function submitResponse(ending = false, capturedBlob = recordedBlob): Promise<boolean> {
+    const snapshot = snapshotRef.current;
+    if (!snapshot || !capturedBlob || (!ending && (busy || isRecording || recordingFinalizing)) || submissionLock.current) return false;
     submissionLock.current = true;
     autoSendPending.current = false;
-    const responseBlob = recordedBlob;
-    const responseDurationMs = recordingSeconds * 1000;
+    const responseBlob = capturedBlob;
+    const responseDurationMs = recordingStartedAt.current ? Math.max(1000, Date.now() - recordingStartedAt.current - recordingPausedDuration.current) : recordingSeconds * 1000;
     const responseText = transcriptText.current.trim() || response.trim();
     const learnerText = responseText || "[Spoken response recorded. Automatic transcript unavailable.]";
+    responseAttemptId.current ??= crypto.randomUUID();
+    rememberSnapshot(snapshot, storageMode, learnerText);
     updateResponse(""); setBusy(true); setCanRecord(false); setError(""); setProcessingStage("sending-response");
     try {
       const request = await fetch("/api/practice", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ action: "respond", sessionId: snapshot.sessionId, storageMode, text: responseText, hasRecording: true, completeAfterResponse: timeExpired || isQuestionPreview, practiceMinutes, remainingSeconds }),
+        body: JSON.stringify({ action: "respond", responseId: responseAttemptId.current, sessionId: snapshot.sessionId, storageMode, snapshot, text: responseText, hasRecording: true, completeAfterResponse: ending || timeExpired || isQuestionPreview, practiceMinutes, remainingSeconds }),
       });
-      const data = await request.json() as { error?: string; turns: ConversationTurn[]; completed?: boolean };
+      const data = await request.json() as { error?: string; snapshot?: PracticeSnapshot; turns: ConversationTurn[]; completed?: boolean };
       if (!request.ok) throw new Error(data.error ?? "Could not save your response.");
-      setSnapshot((current) => current ? { ...current, status: data.completed ? "completed" : current.status, turns: [...current.turns, ...data.turns] } : current);
+      responseAttemptId.current = undefined;
+      rememberSnapshot(data.snapshot ?? { ...snapshot, status: data.completed ? "completed" : snapshot.status, turns: [...snapshot.turns, ...data.turns] });
       const coachTurn = data.turns.find((turn) => turn.role === "coach");
 
       const learnerTurn = data.turns.find((turn) => turn.role === "learner");
+      if (learnerTurn && recordingConsent) await saveLocalRecording(snapshot.sessionId, learnerTurn.id, responseBlob).catch(() => undefined);
       if (learnerTurn && recordingConsent) {
         setProcessingStage("saving-recording");
         try {
@@ -833,19 +905,22 @@ export default function PracticePage() {
         setPlaybackUrls((current) => ({ ...current, [learnerTurn.id]: URL.createObjectURL(responseBlob) }));
       }
       clearRecording();
+      lastRecordedBlob.current = null;
       if (data.completed) {
         setProcessingStage(null);
         setCompleted(true);
-        speakCoachTurn(coachTurn, isQuestionPreview ? undefined : playCompletionClap);
+        if (!ending) speakCoachTurn(coachTurn, isQuestionPreview ? undefined : playCompletionClap);
       } else {
         setProcessingStage("maya-responding");
         speakCoachTurn(coachTurn, () => { setProcessingStage(null); cueStudentTurn(); });
       }
+      return true;
     } catch (caught) {
       setProcessingStage(null);
       updateResponse(learnerText);
       setCanRecord(true);
       setError(caught instanceof Error ? `${caught.message} Your recording is still available—select Send Response to try again.` : "Your response could not be sent. Your recording is still available—select Send Response to try again.");
+      return false;
     }
     finally { setBusy(false); submissionLock.current = false; }
   }
@@ -857,29 +932,55 @@ export default function PracticePage() {
   }
 
   async function finishPractice() {
-    if (!snapshot || busy || isRecording) return;
+    if (!snapshotRef.current || busy || finishing.current) return;
+    finishing.current = true;
+    preparationCancelled.current = true; autoSendPending.current = false;
+    setPreparationSeconds(null); setCountdown(null); setCanRecord(false);
+    stopMayaPlayback(); pausedRef.current = false; setIsPaused(false);
     setBusy(true); setError("");
     try {
-      const request = await fetch("/api/practice", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ action: "complete", sessionId: snapshot.sessionId, storageMode, practiceMinutes, remainingSeconds }),
-      });
-      const data = await request.json() as { error?: string; completed?: boolean; turns?: ConversationTurn[] };
-      if (!request.ok) throw new Error(data.error ?? "Could not finish this practice.");
-      const closingTurns = data.turns ?? [];
-      setIsPaused(false); pausedRef.current = false;
-      if (mayaAudio.current?.paused) void mayaAudio.current.play().catch(() => undefined);
-      else window.speechSynthesis?.resume();
-      setCompleted(true); setSnapshot((current) => current ? { ...current, status: "completed", turns: [...current.turns, ...closingTurns] } : current);
-      speakCoachTurn(closingTurns.find((turn) => turn.role === "coach"), playCompletionClap);
-    } catch (caught) { setError(caught instanceof Error ? caught.message : "Could not finish this practice."); }
-    finally { setBusy(false); }
+      let blob = lastRecordedBlob.current ?? recordedBlob;
+      if (mediaRecorder.current && mediaRecorder.current.state !== "inactive") {
+        const stopped = new Promise<Blob>(resolve => { recordingStopped.current = resolve; });
+        stopRecording();
+        blob = await stopped;
+      }
+      if (blob && !await submitResponse(true, blob)) {
+        const current = snapshotRef.current!;
+        const learner: ConversationTurn = { id: crypto.randomUUID(), role: "learner", text: transcriptText.current.trim() || "[Spoken response recorded. Automatic transcript unavailable.]", sequence: current.turns.length + 1, occurredAt: new Date().toISOString() };
+        rememberSnapshot({ ...current, turns: [...current.turns, learner] }, "memory");
+        setStorageMode("memory");
+        if (recordingConsent) await saveLocalRecording(current.sessionId, learner.id, blob).catch(() => undefined);
+      }
+      let current = snapshotRef.current!;
+      if (current.status !== "completed") {
+        const request = await fetch("/api/practice", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ action: "complete", sessionId: current.sessionId, storageMode, snapshot: current, practiceMinutes, remainingSeconds }),
+        });
+        const data = await request.json() as { error?: string; snapshot?: PracticeSnapshot; completed?: boolean; turns?: ConversationTurn[] };
+        if (!request.ok) throw new Error(data.error ?? "Could not finish this practice.");
+        const closingTurns = data.turns ?? [];
+        current = data.snapshot ?? { ...current, status: "completed", turns: [...current.turns, ...closingTurns] };
+        rememberSnapshot(current); setCompleted(true);
+      }
+      window.location.assign(`/transcript?sessionId=${current.sessionId}&mode=${storageMode}`);
+    } catch {
+      const current = snapshotRef.current!;
+      const { conversationProvider } = await import("@/lib/conversation/provider");
+      const text = await conversationProvider.createClosingTurn({ ...current, timing: { plannedDurationMinutes: practiceMinutes, remainingSeconds: 0 } });
+      const closing: ConversationTurn = { id: crypto.randomUUID(), role: "coach", text, sequence: current.turns.length + 1, occurredAt: new Date().toISOString() };
+      rememberSnapshot({ ...current, status: "completed", turns: [...current.turns, closing] }, "memory");
+      setCompleted(true);
+      window.location.assign(`/transcript?sessionId=${current.sessionId}&mode=memory`);
+    }
+    finally { setBusy(false); finishing.current = false; }
   }
 
   function confirmEndConversation() {
-    if (busy || recordingFinalizing || isRecording) return;
-    if (!window.confirm("End this conversation now? Maya will close the session and save the responses you already sent.")) return;
+    if (busy || recordingFinalizing || microphoneStarting) return;
+    if (!window.confirm("End this conversation now? Your current response will be saved before your report opens.")) return;
     void finishPractice();
   }
 
@@ -977,7 +1078,7 @@ export default function PracticePage() {
         </div>
         {!completed && <div className="conversation-heading-actions">
           <button className={isPaused ? "button button-gold pause-conversation" : "button button-quiet pause-conversation"} type="button" onClick={toggleConversationPause} disabled={busy || recordingFinalizing || microphoneStarting}>{isPaused ? "Resume Conversation" : "Pause Conversation"}</button>
-          {!isQuestionPreview && <button className="text-link" onClick={confirmEndConversation} disabled={busy || recordingFinalizing || isRecording} title={isRecording ? "Send your current response before ending the conversation." : undefined}>End Conversation</button>}
+          {!isQuestionPreview && <button className="text-link" onClick={confirmEndConversation} disabled={busy || recordingFinalizing || microphoneStarting}>End Conversation</button>}
         </div>}
       </div>
       <div className="conversation-layout">
@@ -1022,7 +1123,7 @@ export default function PracticePage() {
             <div className="conversation-complete" role="status" aria-live="polite">
               <div className="completion-celebration" aria-hidden="true"><span>👏</span><span>👏</span></div>
               <div className="completion-copy"><span className="completion-label">Conversation complete</span><strong>Great work completing your conversation practice.</strong><p>Regular speaking practice is part of developing confidence and proficiency. Your descriptive practice feedback, transcript, and saved voice recordings are ready.</p></div>
-              <div className="completion-actions"><a className="button button-gold" href={`/api/practice/report?sessionId=${snapshot.sessionId}&mode=${storageMode}`} download>Download my feedback report</a><Link className="button button-quiet" href={`/transcript?sessionId=${snapshot.sessionId}&mode=${storageMode}`}>Review conversation</Link></div>
+              <div className="completion-actions"><Link className="button button-gold" href={`/transcript?sessionId=${snapshot.sessionId}&mode=${storageMode}`}>View my feedback report</Link><Link className="button button-quiet" href={`/transcript?sessionId=${snapshot.sessionId}&mode=${storageMode}`}>Review conversation</Link></div>
             </div>
           ) : (
             <form className="response-composer" onSubmit={sendResponse}>

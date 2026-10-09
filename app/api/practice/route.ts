@@ -6,6 +6,7 @@ import { normalizePracticeMinutes } from "@/lib/conversation/time-plan";
 import { getLanguagePackDefinition, listLanguagePackDefinitions } from "@/lib/language-packs/registry";
 import { createPracticeEstimate } from "@/lib/practice/practice-estimate";
 import { getPracticeStore, startWithAvailableStore, type PracticeSnapshot, type PracticeStorageMode } from "@/lib/practice/store";
+import { validateRecoverySnapshot } from "@/lib/practice/recovery";
 
 const newTurn = (role: "coach" | "learner", text: string, sequence: number): ConversationTurn => ({
   id: crypto.randomUUID(), role, text, sequence, occurredAt: new Date().toISOString(),
@@ -69,10 +70,26 @@ export async function POST(request: Request) {
   const sessionId = String(body.sessionId ?? "");
   const storageMode = (body.storageMode ?? "d1") as PracticeStorageMode;
   const store = getPracticeStore(storageMode);
-  const snapshot = await store.get(sessionId);
+  let snapshot = await store.get(sessionId);
+  if (storageMode === "memory") {
+    const recovered = validateRecoverySnapshot(body.snapshot, sessionId);
+    if (recovered && (!snapshot || recovered.turns.length > snapshot.turns.length || recovered.turns.length === snapshot.turns.length && recovered.status === "completed")) {
+      const pack = getLanguagePackDefinition(recovered.languagePackId)!;
+      await store.start(recovered, pack, String(body.participantKey ?? sessionId));
+      if (recovered.status === "completed") await store.complete(sessionId);
+      snapshot = recovered;
+    }
+  }
   if (!snapshot) return NextResponse.json({ error: "Practice session not found. Please start again." }, { status: 404 });
 
+  if (action === "recover") return NextResponse.json({ snapshot, storageMode, rubricProfile: evaluateAdaptiveConversation(snapshot.turns, snapshot.localeTag) });
+
   if (action === "respond") {
+    const responseId = typeof body.responseId === "string" && /^[\w-]{1,80}$/.test(body.responseId) ? body.responseId : undefined;
+    const existingLearner = snapshot.turns.find(turn => turn.role === "learner" && turn.id === responseId);
+    const existingCoach = existingLearner && snapshot.turns.find(turn => turn.sequence === existingLearner.sequence + 1 && turn.role === "coach");
+    if (existingLearner && existingCoach) return NextResponse.json({ snapshot, turns: [existingLearner, existingCoach], completed: snapshot.status === "completed", storageMode, rubricProfile: evaluateAdaptiveConversation(snapshot.turns, snapshot.localeTag) });
+    if (snapshot.status === "completed") return NextResponse.json({ error: "This conversation is already complete." }, { status: 409 });
     const text = String(body.text ?? "").trim();
     const hasRecording = body.hasRecording === true;
     if (!text && !hasRecording) return NextResponse.json({ error: "Record a spoken response before continuing." }, { status: 400 });
@@ -80,33 +97,35 @@ export async function POST(request: Request) {
     const pack = getLanguagePackDefinition(snapshot.languagePackId);
     if (!pack) return NextResponse.json({ error: "Language pack is unavailable." }, { status: 409 });
     const learnerText = text || "[Spoken response recorded. Automatic transcript unavailable.]";
-    const learner = newTurn("learner", learnerText, snapshot.turns.length + 1);
+    const learner = existingLearner ?? { ...newTurn("learner", learnerText, snapshot.turns.length + 1), ...(responseId ? { id: responseId } : {}) };
+    if (!existingLearner) await store.append(sessionId, [learner]);
+    const precedingTurns = snapshot.turns.filter(turn => turn.sequence < learner.sequence);
     const timing = timingFromBody(body);
     if (body.completeAfterResponse === true) {
       const closingText = await conversationProvider.createClosingTurn({
         languagePackId: snapshot.languagePackId,
         localeTag: pack.pack.localeTag,
         objectiveId: snapshot.objectiveId,
-        turns: [...snapshot.turns, learner],
+        turns: [...precedingTurns, learner],
         timing: { ...timing, remainingSeconds: 0 },
       });
       const closing = newTurn("coach", closingText, learner.sequence + 1);
-      await store.append(sessionId, [learner, closing]);
+      await store.append(sessionId, [closing]);
       await store.complete(sessionId);
-      const completedTurns = [...snapshot.turns, learner, closing];
-      return NextResponse.json({ turns: [learner, closing], completed: true, storageMode, engine: conversationProvider.name, rubricProfile: evaluateAdaptiveConversation(completedTurns, pack.pack.localeTag) });
+      const completedTurns = [...precedingTurns, learner, closing];
+      return NextResponse.json({ snapshot: await store.get(sessionId), turns: [learner, closing], completed: true, storageMode, engine: conversationProvider.name, rubricProfile: evaluateAdaptiveConversation(completedTurns, pack.pack.localeTag) });
     }
     const coachText = await conversationProvider.createFollowUp({
       languagePackId: snapshot.languagePackId,
       localeTag: pack.pack.localeTag,
       objectiveId: snapshot.objectiveId,
-      turns: [...snapshot.turns, learner],
+      turns: [...precedingTurns, learner],
       timing,
     });
     const coach = newTurn("coach", coachText, learner.sequence + 1);
-    await store.append(sessionId, [learner, coach]);
-    const updatedTurns = [...snapshot.turns, learner, coach];
-    return NextResponse.json({ turns: [learner, coach], storageMode, engine: conversationProvider.name, rubricProfile: evaluateAdaptiveConversation(updatedTurns, pack.pack.localeTag) });
+    await store.append(sessionId, [coach]);
+    const updatedTurns = [...precedingTurns, learner, coach];
+    return NextResponse.json({ snapshot: await store.get(sessionId), turns: [learner, coach], storageMode, engine: conversationProvider.name, rubricProfile: evaluateAdaptiveConversation(updatedTurns, pack.pack.localeTag) });
   }
 
   if (action === "complete") {
@@ -121,10 +140,10 @@ export async function POST(request: Request) {
       const closing = newTurn("coach", closingText, snapshot.turns.length + 1);
       await store.append(sessionId, [closing]);
       await store.complete(sessionId);
-      return NextResponse.json({ completed: true, sessionId, storageMode, turns: [closing], rubricProfile: evaluateAdaptiveConversation([...snapshot.turns, closing], snapshot.localeTag) });
+      return NextResponse.json({ snapshot: await store.get(sessionId), completed: true, sessionId, storageMode, turns: [closing], rubricProfile: evaluateAdaptiveConversation([...snapshot.turns, closing], snapshot.localeTag) });
     }
     await store.complete(sessionId);
-    return NextResponse.json({ completed: true, sessionId, storageMode, turns: [], rubricProfile: evaluateAdaptiveConversation(snapshot.turns, snapshot.localeTag) });
+    return NextResponse.json({ snapshot, completed: true, sessionId, storageMode, turns: [], rubricProfile: evaluateAdaptiveConversation(snapshot.turns, snapshot.localeTag) });
   }
 
   return NextResponse.json({ error: "Unsupported practice action." }, { status: 400 });

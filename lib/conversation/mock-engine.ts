@@ -3,7 +3,7 @@ import { adjustInterviewStage, createAdaptivePrompt, createConnectedAdaptiveProm
 import { evaluateAdaptiveConversation } from "./adaptive-rubric";
 import { assessResponse, countAnsweredResponses, createRepairResponse } from "./response-assessment";
 import { getLocalizedInterviewScript } from "./interview-scripts";
-import { selectQuestionBankPrompt } from "./question-bank";
+import { createLocalizedGroundedPrompt } from "./localized-grounding";
 import { selectInterviewStage, type InterviewStage } from "./time-plan";
 import { analyzeResponseLanguageUse, createTargetLanguageRedirect } from "./target-language";
 
@@ -12,15 +12,6 @@ const transcriptUnavailable = (text: string) => text.startsWith("[Spoken respons
 const responseUnits = (text: string, localeTag: string) => {
   if (/^(ja|zh)/i.test(localeTag)) return (text.match(/[\p{L}\p{N}]/gu) ?? []).length;
   return countWords(text);
-};
-
-const localizedPromptIndex: Record<InterviewStage, number> = {
-  warmup: 0,
-  description: 1,
-  story: 2,
-  opinion: 3,
-  role_play: 5,
-  wrap: 6,
 };
 
 const normalizePrompt = (text: string) => text.toLocaleLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim();
@@ -55,7 +46,8 @@ const alternatePrompts: Record<InterviewStage, readonly string[]> = {
 function chooseUnaskedPrompt(candidates: readonly (string | null | undefined)[], coachTurns: readonly string[]): string {
   const asked = new Set(coachTurns.map(normalizePrompt));
   return candidates.find((candidate): candidate is string => Boolean(candidate && !asked.has(normalizePrompt(candidate))))
-    ?? `Let’s move to a different topic. What is one experience you would like to describe today?`;
+    ?? candidates.find((candidate): candidate is string => Boolean(candidate))
+    ?? "What would you like to explore further?";
 }
 
 export class MockConversationProvider implements ConversationProvider {
@@ -74,9 +66,7 @@ export class MockConversationProvider implements ConversationProvider {
     if (localized) {
       if (!latest) return localized.noSpeech;
       if (transcriptUnavailable(latest)) {
-        const coachTurns = context.turns.filter((turn) => turn.role === "coach").map((turn) => turn.text);
-        const nextIndex = Math.min(localized.followUps.length - 1, Math.max(0, learnerTurns.length - 1));
-        return chooseUnaskedPrompt([...localized.followUps.slice(nextIndex), ...localized.followUps.slice(0, nextIndex)], coachTurns);
+        return localized.noSpeech;
       }
       const latestLanguageUse = analyzeResponseLanguageUse(latest, context.localeTag);
       if (latestLanguageUse.status === "mixed_language") return createTargetLanguageRedirect(context.localeTag, latestLanguageUse.englishWords);
@@ -84,19 +74,11 @@ export class MockConversationProvider implements ConversationProvider {
       const answeredCount = learnerTurns.filter((turn) => !transcriptUnavailable(turn.text) && analyzeResponseLanguageUse(turn.text, context.localeTag).status !== "mixed_language" && responseUnits(turn.text, context.localeTag) >= 6).length;
       const profile = evaluateAdaptiveConversation(context.turns, context.localeTag);
       const stage = adjustInterviewStage(selectInterviewStage(context.timing, answeredCount), profile.currentStage);
-      const coachTurns = context.turns.filter((turn) => turn.role === "coach").map((turn) => turn.text);
-      const preferredIndex = localizedPromptIndex[stage];
-      const stageCandidates = stage === "wrap"
-        ? localized.followUps.slice(6)
-        : [...localized.followUps.slice(preferredIndex, 6), ...localized.followUps.slice(0, preferredIndex)];
-      return chooseUnaskedPrompt(stageCandidates, coachTurns);
+      return createLocalizedGroundedPrompt(context.localeTag, latest, stage, learnerTurns.length);
     }
     const currentPrompt = [...context.turns].reverse().find((turn) => turn.role === "coach")?.text ?? "";
     if (transcriptUnavailable(latest)) {
-      const coachTurns = context.turns.filter((turn) => turn.role === "coach").map((turn) => turn.text);
-      const fallbackStages: InterviewStage[] = ["warmup", "description", "story", "opinion", "role_play", "wrap"];
-      const fallbackStage = fallbackStages[Math.min(fallbackStages.length - 1, learnerTurns.length - 1)] ?? "warmup";
-      return chooseUnaskedPrompt(alternatePrompts[fallbackStage], coachTurns);
+      return `I couldn't hear the words in your response. Please try again: ${currentPrompt}`;
     }
     const assessment = assessResponse(currentPrompt, latest);
     if (assessment.outcome !== "answered") return createRepairResponse(assessment);
@@ -107,25 +89,18 @@ export class MockConversationProvider implements ConversationProvider {
 
     const coachTurns = context.turns.filter((turn) => turn.role === "coach").map((turn) => turn.text);
     if (plannedStage === "wrap") {
-      return chooseUnaskedPrompt([createAdaptivePrompt("wrap", profile, latest), ...alternatePrompts.wrap], coachTurns);
+      return chooseUnaskedPrompt([createAdaptivePrompt("wrap", profile), ...alternatePrompts.wrap], coachTurns);
     }
 
     let nextPrompt: string;
     if (turnNumber === 1) {
-      nextPrompt = createPersonalizedAdaptiveFollowUp(profile, latest) ?? createAdaptivePrompt("warmup", profile, latest);
+      nextPrompt = createPersonalizedAdaptiveFollowUp(profile, latest) ?? createConnectedAdaptivePrompt("warmup", profile, latest, context.turns);
     } else {
-      nextPrompt = createConnectedAdaptivePrompt(plannedStage, profile, latest);
+      nextPrompt = createConnectedAdaptivePrompt(plannedStage, profile, latest, context.turns);
     }
-    const bankPrompt = selectQuestionBankPrompt({
-      adaptiveStage: profile.currentStage,
-      interviewStage: plannedStage,
-      askedPrompts: coachTurns,
-      turnNumber,
-    });
+    const detail = latest.split(/[.!?]/)[0].trim().slice(0, 100);
     return chooseUnaskedPrompt(
-      turnNumber < 6
-        ? [nextPrompt, bankPrompt, createAdaptivePrompt(plannedStage, profile, latest), ...alternatePrompts[plannedStage]]
-        : [bankPrompt, nextPrompt, createAdaptivePrompt(plannedStage, profile, latest), ...alternatePrompts[plannedStage]],
+      [nextPrompt, `What happened in a specific experience connected to “${detail}”?`, `What would you like to explore next about “${detail}”?`, `What matters most to you about “${detail}”, and why?`, `What is one detail about “${detail}” that you would like me to understand?`, `If circumstances changed, how would you approach “${detail}”?`, `How would you explain “${detail}” to someone unfamiliar with it?`, `What possibilities would you like to consider for “${detail}”?`, `What else would you like to add about “${detail}”?`],
       coachTurns,
     );
   }

@@ -48,6 +48,48 @@ const adaptiveAnswers = [
   "My hometown is a diverse desert city with strong communities. Compared with the smaller town where I lived before, it offers more opportunities; however, growth also creates transportation challenges. In other words, it taught me to balance independence with community responsibility. What do you think growing cities should protect?",
 ];
 
+test("recovers a missing memory session, saves the final response once, and generates a PDF from the backup", async () => {
+  const worker = await loadWorker("session-recovery-finalization");
+  const session = await startAdaptiveSession(worker);
+  const unfinishedReport = await worker.fetch(new Request(`http://localhost/api/practice/report?sessionId=${session.snapshot.sessionId}&mode=memory`), runtimeEnv, runtimeContext);
+  assert.equal(unfinishedReport.status, 409);
+  globalThis.__opiMemoryStore.sessions.delete(session.snapshot.sessionId);
+  const responseId = crypto.randomUUID();
+  const body = { action: "respond", sessionId: session.snapshot.sessionId, storageMode: "memory", snapshot: session.snapshot, responseId, text: "I enjoy photography because I like noticing small details in everyday life.", completeAfterResponse: true };
+  const submit = () => worker.fetch(new Request("http://localhost/api/practice", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) }), runtimeEnv, runtimeContext);
+  const first = await submit();
+  assert.equal(first.status, 200);
+  const completed = await first.json();
+  assert.equal(completed.snapshot.status, "completed");
+  assert.equal(completed.snapshot.turns.length, 3);
+  assert.equal(completed.snapshot.turns[1].id, responseId);
+  assert.equal(completed.snapshot.turns[1].text, body.text);
+  const retry = await submit();
+  assert.equal(retry.status, 200);
+  assert.deepEqual((await retry.json()).snapshot.turns, completed.snapshot.turns);
+  globalThis.__opiMemoryStore.sessions.delete(session.snapshot.sessionId);
+  const report = await worker.fetch(new Request("http://localhost/api/practice/report", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ snapshot: completed.snapshot }) }), runtimeEnv, runtimeContext);
+  assert.equal(report.status, 200);
+  assert.match(report.headers.get("content-type"), /application\/pdf/);
+  assert.equal(new TextDecoder().decode((await report.arrayBuffer()).slice(0, 4)), "%PDF");
+  const invalid = structuredClone(completed.snapshot);
+  invalid.turns[1].sequence = 99;
+  const rejected = await worker.fetch(new Request("http://localhost/api/practice/report", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ snapshot: invalid }) }), runtimeEnv, runtimeContext);
+  assert.equal(rejected.status, 400);
+});
+
+test("keeps the learner's topic after six responses without vocabulary corrections or invented places", async () => {
+  const worker = await loadWorker("sustained-grounding");
+  const session = await startAdaptiveSession(worker);
+  for (let index = 0; index < 8; index++) {
+    const text = `I enjoy taking photographs because noticing light helps me understand everyday life. Last week I tried a new technique and learned to be patient with the process. This is experience number ${index + 1}.`;
+    const result = await sendAdaptiveResponse(worker, session, text, 700);
+    const prompt = result.turns.find(turn => turn.role === "coach").text;
+    assert.doesNotMatch(prompt, /hometown|that place|education policy|airport|You mentioned supporting others|You described|You connected/i);
+    assert.match(prompt, /photograph|activity|patient|taking|what would you like|my question/i);
+  }
+});
+
 async function reachAdvancedStage(worker) {
   const session = await startAdaptiveSession(worker);
   const profiles = [];
@@ -191,7 +233,7 @@ test("walks the student through the pre-conversation recording flow", async () =
   assert.match(source, /readinessStep > 0[\s\S]*Previous/i);
   assert.match(source, /busy \? "Preparing\.\.\." : "Start"/i);
   assert.match(source, /Try one question first/i);
-  assert.match(source, /completeAfterResponse: timeExpired \|\| isQuestionPreview/i);
+  assert.match(source, /completeAfterResponse: ending \|\| timeExpired \|\| isQuestionPreview/i);
   assert.match(source, /Start Full Conversation/i);
   assert.match(source, /Try Another Question/i);
   assert.match(source, /does not create a feedback report/i);
@@ -219,7 +261,7 @@ test("keeps the Phase 4 live conversation focused, stateful, and recoverable", a
   assert.match(source, /Pause Conversation/i);
   assert.match(source, /mediaRecorder\.current\?\.state === "recording"[\s\S]*\.pause\(\)/i);
   assert.match(source, /mediaRecorder\.current\?\.state === "paused"[\s\S]*\.resume\(\)/i);
-  assert.match(source, /completeAfterResponse: timeExpired \|\| isQuestionPreview/i);
+  assert.match(source, /completeAfterResponse: ending \|\| timeExpired \|\| isQuestionPreview/i);
   assert.doesNotMatch(source, />Stop Recording</i);
 });
 
@@ -445,14 +487,14 @@ test("runs localized practice turns for Spanish and Japanese packs", async () =>
       name: "Ana",
       answer: "Soy estudiante y me gusta aprender idiomas con mis amigos.",
       opening: /Hola Ana|cuéntame sobre ti/i,
-      followUp: /tiempo libre/i,
+      followUp: /Soy estudiante.*aprender idiomas/i,
     },
     {
       languagePackId: "lang_ja_jp_v1",
       name: "Yuki",
       answer: "私は大学で国際経営を勉強しています。",
       opening: /Yukiさん|教えてください/,
-      followUp: /自由な時間/,
+      followUp: /大学で国際経営を勉強/,
     },
   ];
 
@@ -585,7 +627,7 @@ test("accepts a recorded response when automatic transcription is unavailable", 
   assert.equal(continued.turns[0].role, "learner");
   assert.equal(continued.turns[1].role, "coach");
   assert.doesNotMatch(continued.turns[1].text, /didn.t catch an answer/i);
-  assert.match(continued.turns[1].text, /typical day|influenced you|comfortable|work or study/i);
+  assert.match(continued.turns[1].text, /couldn't hear.*Please try again.*tell me about yourself/i);
   assert.doesNotMatch(continued.turns[1].text, /get to know|helpful picture|sounds important/i);
 
   const retryResponse = await worker.fetch(new Request("http://localhost/api/practice", {
@@ -730,8 +772,8 @@ test("moves through connected OPI-style stages using the learner's latest topic"
   assert.match(followUps[2], /place|hometown|event/i);
   assert.match(followUps[3], /travel|trip|trade-off|broader lesson/i);
   assert.match(followUps[4], /technology|AI tool|school|workplace/i);
-  assert.match(followUps[5], /education policy|challenge|decision|strategy|ethical/i);
-  assert.ok(followUps.slice(1, 5).every((prompt) => /You (connected|described|mentioned|brought|raised)|I want to stay/i.test(prompt)));
+  assert.match(followUps[5], /libraries|community|technology|education/i);
+  assert.ok(followUps.slice(1, 5).every((prompt) => !/^You (connected|described|mentioned|brought|raised)/i.test(prompt)));
   assert.equal(new Set(followUps).size, followUps.length);
   assert.doesNotMatch(followUps.join(" "), /score|pass|fail|proficiency level|fluent enough/i);
 
