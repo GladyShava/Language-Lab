@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { TEMPORARY_PRODUCT_NAME } from "../lib/brand";
+import { platformIntroductionScript } from "../lib/content/platform-introduction";
 
 export default function LandingPage() {
   const [tutorialOpen, setTutorialOpen] = useState(false);
@@ -51,10 +52,14 @@ export default function LandingPage() {
             <h2 id="tutorial-title">How the studio works</h2>
             <p>Listen to the short introduction, then begin when you are ready.</p>
             <div className="tutorial-media-slot">
-              <audio controls preload="metadata" src="/audio/platform-introduction.mp3">
+              <audio controls preload="metadata" src="/audio/platform-introduction.mp3?v=20261009-recovery">
                 Your browser does not support audio playback.
               </audio>
             </div>
+            <details>
+              <summary>Read the explanation</summary>
+              {platformIntroductionScript.map(paragraph => <p key={paragraph}>{paragraph}</p>)}
+            </details>
           </section>
         </div>
       )}

@@ -771,13 +771,16 @@ textarea:focus, input:focus { outline: 2px solid rgba(1, 121, 183, 0.22); border
 .landing-primary-action:active { box-shadow: 0 3px 10px rgba(0,31,66,0.28), inset 0 2px 0 rgba(166,111,0,0.18); transform: translateY(1px); }
 .landing-secondary-action:hover, .landing-secondary-action:focus-visible { border-color: var(--white); background: rgba(255,255,255,0.12); transform: translateY(-1px); }
 .tutorial-backdrop { padding: 1.25rem; display: grid; place-items: center; position: fixed; inset: 0; z-index: 100; background: rgba(0,20,45,0.72); }
-.tutorial-dialog { width: min(560px, 100%); padding: clamp(1.6rem, 4vw, 2.6rem); border-top: 6px solid var(--gold); background: var(--white); box-shadow: 0 24px 80px rgba(0,20,45,0.4); position: relative; }
+.tutorial-dialog { width: min(560px, 100%); max-height: calc(100dvh - 2.5rem); overflow-y: auto; padding: clamp(1.6rem, 4vw, 2.6rem); border-top: 6px solid var(--gold); background: var(--white); box-shadow: 0 24px 80px rgba(0,20,45,0.4); position: relative; }
 .tutorial-close { width: 42px; height: 42px; display: grid; place-items: center; position: absolute; top: 1rem; right: 1rem; border: 1px solid var(--line); background: var(--white); color: var(--navy); font-size: 1.6rem; line-height: 1; cursor: pointer; }
 .tutorial-kicker { margin-bottom: 0.5rem; color: var(--twilight); font-size: var(--type-small); font-weight: 800; letter-spacing: 0.1em; text-transform: uppercase; }
 .tutorial-dialog h2 { max-width: calc(100% - 54px); color: var(--navy); }
 .tutorial-dialog > p:not(.tutorial-kicker) { margin-top: 0.6rem; color: var(--muted); }
 .tutorial-media-slot { margin-top: 1.5rem; padding: 1.25rem; border-left: 4px solid var(--gold); background: var(--soft); }
 .tutorial-media-slot audio { width: 100%; display: block; }
+.tutorial-dialog details { margin-top: 1.25rem; color: var(--muted); }
+.tutorial-dialog summary { color: var(--navy); font-weight: 700; cursor: pointer; }
+.tutorial-dialog details p { margin-top: 0.85rem; line-height: 1.6; }
 
 @keyframes landing-film-motion {
   from { transform: scale(1.02) translate3d(-1.5%, 0.5%, 0); }
