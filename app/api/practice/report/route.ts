@@ -14,17 +14,28 @@ export async function GET(request: Request) {
   if (!snapshot) return NextResponse.json({ error: "Session not found" }, { status: 404 });
   const definition = getLanguagePackDefinition(snapshot.languagePackId);
   const recordings = await listRecordings(sessionId, mode);
+  const reportText = `${snapshot.title}\n${snapshot.turns.map((turn) => turn.text).join("\n")}`;
+  let unicodeFontBytes: Uint8Array | undefined;
+  if (/[^\x00-\x7F]/u.test(reportText)) {
+    try {
+      const fontResponse = await fetch(new URL("/fonts/NotoSansCJKsc-Regular.otf", request.url));
+      if (fontResponse.ok) unicodeFontBytes = new Uint8Array(await fontResponse.arrayBuffer());
+    } catch {
+      unicodeFontBytes = undefined;
+    }
+  }
   const bytes = await createPracticeReport({
     snapshot,
     languageName: definition?.pack.displayName ?? snapshot.localeTag,
     recordings,
+    unicodeFontBytes,
   });
   const date = new Date(snapshot.turns[0]?.occurredAt ?? Date.now()).toISOString().slice(0, 10);
 
   return new Response(Uint8Array.from(bytes).buffer, {
     headers: {
       "content-type": "application/pdf",
-      "content-disposition": `attachment; filename="opi-practice-report-${date}.pdf"`,
+      "content-disposition": `attachment; filename="beyond-hello-practice-report-${date}.pdf"`,
       "cache-control": "private, no-store",
     },
   });

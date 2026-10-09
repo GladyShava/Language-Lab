@@ -2,10 +2,14 @@
 import { handleImageOptimization, DEFAULT_DEVICE_SIZES, DEFAULT_IMAGE_SIZES } from "vinext/server/image-optimization";
 import handler from "vinext/server/app-router-entry";
 import { setCloudflareBindings } from "../db";
+import { setCreateAIRuntimeBindings } from "../lib/createai/runtime-env";
 
 interface Env {
   ASSETS: Fetcher;
   DB: D1Database;
+  CREATEAI_SERVICE_TOKEN?: string;
+  CREATEAI_BASE_URL?: string;
+  CREATEAI_VOICE?: string;
   IMAGES: {
     input(stream: ReadableStream): {
       transform(options: Record<string, unknown>): {
@@ -29,6 +33,7 @@ interface ExecutionContext {
 const worker = {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     setCloudflareBindings(env);
+    setCreateAIRuntimeBindings(env);
     const url = new URL(request.url);
 
     if (url.pathname === "/_vinext/image") {

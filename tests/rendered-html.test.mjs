@@ -240,6 +240,70 @@ test("keeps core navigation and conversation controls usable on phones", async (
   assert.match(styles, /@media \(max-width: 380px\)/i);
 });
 
+test("uses protected CreateAI speech with cached browser-voice fallback", async () => {
+  const [practiceSource, routeSource] = await Promise.all([
+    readFile(new URL("../app/practice/page.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/api/speech/route.ts", import.meta.url), "utf8"),
+  ]);
+  assert.match(practiceSource, /fetch\("\/api\/speech"/i);
+  assert.match(practiceSource, /mayaAudioCache/i);
+  assert.match(practiceSource, /speakWithBrowserVoice/i);
+  assert.match(routeSource, /CREATEAI_SERVICE_TOKEN|CreateAIConfig/i);
+  assert.match(routeSource, /endpoint:\s*"speech"/i);
+  assert.match(routeSource, /request_source:\s*"override_params"/i);
+  assert.match(routeSource, /agentic:\s*false/i);
+  assert.match(routeSource, /allowedVoices/i);
+  assert.doesNotMatch(practiceSource, /CREATEAI_SERVICE_TOKEN/i);
+});
+
+test("proxies Maya audio through CreateAI without returning the service token", async () => {
+  const worker = await loadWorker("createai-speech-proxy");
+  const originalFetch = globalThis.fetch;
+  let upstreamAuthorization = "";
+  let upstreamPayload = null;
+  globalThis.fetch = async (input, init) => {
+    const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+    if (url === "https://api-main.aiml.asu.edu/query") {
+      upstreamAuthorization = new Headers(init?.headers).get("authorization") ?? "";
+      upstreamPayload = JSON.parse(String(init?.body));
+      return new Response(JSON.stringify({ audio_response: "AQIDBA==" }), { headers: { "content-type": "application/json" } });
+    }
+    return originalFetch(input, init);
+  };
+  try {
+    const response = await worker.fetch(new Request("http://localhost/api/speech", {
+      method: "POST",
+      headers: { "content-type": "application/json", origin: "http://localhost" },
+      body: JSON.stringify({ text: "你好，欢迎练习。", localeTag: "zh-CN" }),
+    }), { ...runtimeEnv, CREATEAI_SERVICE_TOKEN: "test-service-token", CREATEAI_BASE_URL: "https://api-main.aiml.asu.edu" }, runtimeContext);
+    assert.equal(response.status, 200);
+    assert.equal(response.headers.get("content-type"), "audio/mpeg");
+    assert.equal(response.headers.get("x-maya-voice"), "nova");
+    assert.deepEqual([...new Uint8Array(await response.arrayBuffer())], [1, 2, 3, 4]);
+    assert.equal(upstreamAuthorization, "Bearer test-service-token");
+    assert.equal(upstreamPayload.endpoint, "speech");
+    assert.equal(upstreamPayload.query, "你好，欢迎练习。");
+    assert.equal(upstreamPayload.agentic, false);
+    assert.doesNotMatch(JSON.stringify(await response.headers), /test-service-token/i);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("presents reflection as a full-width report with a checked PDF download", async () => {
+  const [source, styles] = await Promise.all([
+    readFile(new URL("../app/transcript/page.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/globals.css", import.meta.url), "utf8"),
+  ]);
+  assert.match(source, /className="practice-reflection-report"/i);
+  assert.match(source, /Your conversation report/i);
+  assert.match(source, /fetch\(reportHref\)/i);
+  assert.match(source, /URL\.createObjectURL/i);
+  assert.match(source, /link\.download = filename/i);
+  assert.match(styles, /\.report-profile-summary[^}]*grid-template-columns/i);
+  assert.match(styles, /\.report-insight-grid[^}]*grid-template-columns/i);
+});
+
 test("builds student-specific progress from completed conversations", async () => {
   const worker = await loadWorker("progress-history");
   const participantKey = "progress-student";
@@ -692,6 +756,7 @@ test("moves through connected OPI-style stages using the learner's latest topic"
   assert.equal(reportResponse.status, 200);
   assert.match(reportResponse.headers.get("content-type"), /application\/pdf/i);
   assert.match(reportResponse.headers.get("content-disposition"), /attachment/i);
+  assert.match(reportResponse.headers.get("content-disposition"), /beyond-hello-practice-report/i);
   const reportBytes = new Uint8Array(await reportResponse.arrayBuffer());
   assert.equal(new TextDecoder().decode(reportBytes.slice(0, 4)), "%PDF");
 

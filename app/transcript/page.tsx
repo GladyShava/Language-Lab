@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { AdaptiveRubricProfile } from "@/lib/conversation/adaptive-rubric";
+import { rubricDimensionDefinitions, type AdaptiveRubricProfile } from "@/lib/conversation/adaptive-rubric";
 import { getDefaultLanguagePackDefinition, getLanguagePackDefinition } from "@/lib/language-packs/registry";
 
 const defaultLanguagePack = getDefaultLanguagePackDefinition();
@@ -29,6 +29,8 @@ export default function TranscriptPage() {
   const [loadNote, setLoadNote] = useState("");
   const [communityHref, setCommunityHref] = useState("/community");
   const [reportHref, setReportHref] = useState("");
+  const [downloadingReport, setDownloadingReport] = useState(false);
+  const [reportNote, setReportNote] = useState("");
   const [rubricProfile, setRubricProfile] = useState<AdaptiveRubricProfile | null>(null);
   const [languagePackId, setLanguagePackId] = useState(defaultLanguagePack.pack.id);
   const audioRef = useRef<HTMLAudioElement | null>(null);
@@ -151,14 +153,71 @@ export default function TranscriptPage() {
     if (playbackRun.current === run) { setPlayingAll(false); setPlayingId(null); }
   }
 
+  async function downloadReport() {
+    if (!reportHref || downloadingReport) return;
+    setDownloadingReport(true);
+    setReportNote("");
+    try {
+      const response = await fetch(reportHref);
+      if (!response.ok) throw new Error("Report unavailable");
+      const blobUrl = URL.createObjectURL(await response.blob());
+      const disposition = response.headers.get("content-disposition") ?? "";
+      const filename = disposition.match(/filename="?([^";]+)"?/i)?.[1] ?? "beyond-hello-practice-report.pdf";
+      const link = document.createElement("a");
+      link.href = blobUrl;
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.setTimeout(() => URL.revokeObjectURL(blobUrl), 1_000);
+      setReportNote("Your PDF report has been downloaded.");
+    } catch {
+      setReportNote("The report could not be downloaded. Please try again.");
+    } finally {
+      setDownloadingReport(false);
+    }
+  }
+
   return (
     <main className="workspace-page transcript-page">
       <div className="workspace-heading">
         <div><span className="eyebrow">TRANSCRIPT / REPLAY - {languagePack.pack.displayName}</span><h1>{loadedSession ? sessionTitle : "Your practice conversation"}</h1></div>
-        <div className="button-row">{reportHref && <a href={reportHref} className="button button-quiet">Download PDF report</a>}<Link href={communityHref} className="button button-quiet">Share anonymously (optional)</Link><Link href="/shadow" className="button button-gold">Hear a fluent example</Link></div>
+        <div className="button-row">{reportHref && <button type="button" onClick={() => void downloadReport()} disabled={downloadingReport} className="button button-quiet">{downloadingReport ? "Preparing PDF..." : "Download PDF report"}</button>}<Link href={communityHref} className="button button-quiet">Share anonymously (optional)</Link><Link href="/shadow" className="button button-gold">Hear a fluent example</Link></div>
       </div>
 
       {loadNote && <p className="transcript-notice" role="status">{loadNote}</p>}
+      {reportNote && <p className="transcript-notice" role="status">{reportNote}</p>}
+      {rubricProfile && (
+        <section className="practice-reflection-report" aria-labelledby="practice-reflection-heading">
+          <div className="report-heading">
+            <div><span className="eyebrow">PRACTICE REFLECTION</span><h2 id="practice-reflection-heading">Your conversation report</h2><p>Clear, descriptive guidance based on what you demonstrated in this conversation.</p></div>
+            <button type="button" className="button button-gold" onClick={() => void downloadReport()} disabled={!reportHref || downloadingReport}>{downloadingReport ? "Preparing PDF..." : "Download PDF report"}</button>
+          </div>
+
+          <div className="report-profile-summary">
+            <div className="report-profile-highlight"><span>Current coaching stage</span><strong>{rubricProfile.currentStage}</strong><small>Based on {rubricProfile.turnsAnalyzed} {rubricProfile.turnsAnalyzed === 1 ? "response" : "responses"}</small></div>
+            <div className="report-profile-highlight"><span>Overall practice profile</span><strong>{rubricProfile.overallScore.toFixed(1)} <small>/ 5</small></strong><small>A weighted coaching profile, not a test score</small></div>
+            <div className="report-dimensions">
+              {rubricDimensionDefinitions.map((definition) => {
+                const dimension = rubricProfile.dimensions[definition.key];
+                return <div className="report-dimension" key={definition.key}><div><strong>{definition.label}</strong><span>{dimension.score.toFixed(1)} / 5</span></div><div className="report-dimension-track"><i style={{ width: `${dimension.score * 20}%` }} /></div></div>;
+              })}
+            </div>
+          </div>
+
+          <div className="report-insight-grid">
+            <article><span className="report-card-label">WHAT WORKED WELL</span><h3>Your strengths</h3>{rubricProfile.strengths.map((item) => <p key={item}>{item}</p>)}</article>
+            <article><span className="report-card-label">WHAT TO DEVELOP</span><h3>Your growth areas</h3>{rubricProfile.growthAreas.map((item) => <p key={item}>{item}</p>)}</article>
+            <article className="report-next-step"><span className="report-card-label">NEXT CONVERSATION</span><h3>One focused recommendation</h3><p>{rubricProfile.recommendation}</p></article>
+            <article className="report-phrase"><span className="report-card-label">TRY THIS PHRASE</span><h3>A stronger way to express the idea</h3><p>“{rubricProfile.strongerPhrase}”</p></article>
+          </div>
+
+          {!rubricProfile.languageUse.targetLocaleTag.toLowerCase().startsWith("en") && <div className={`report-language-use ${rubricProfile.languageUse.status === "mixed_language" ? "attention" : ""}`}><strong>Target-language consistency</strong><p>{rubricProfile.languageUse.summary}</p>{rubricProfile.languageUse.englishWords.length > 0 && <p>English detected: {rubricProfile.languageUse.englishWords.join(", ")}</p>}<small>Transcript-based coaching check; speech recognition can occasionally mishear a word.</small></div>}
+
+          <div className="report-reflection-row"><div><span className="report-card-label">REFLECT WHILE YOU REPLAY</span><h3>Listen once, then consider:</h3></div><ol><li>What did you communicate clearly?</li><li>Where could one detail or example strengthen your answer?</li><li>What would you try differently in your next conversation?</li></ol></div>
+          <p className="report-disclaimer">{rubricProfile.disclaimer}</p>
+        </section>
+      )}
       <div className="replay-layout">
         <section className="transcript-card">
           <div className="replay-toolbar">
@@ -195,21 +254,6 @@ export default function TranscriptPage() {
             <button className="button button-gold replay-main" disabled={!transcript.length} onClick={playingAll || playingId ? stopPlayback : () => void playConversation()}>{playingAll || playingId ? "Stop replay" : "Play from beginning"}</button>
           </div>
           <div className="replay-summary"><span className="eyebrow">SESSION SUMMARY</span><div><strong>{transcript.length}</strong><span>Total turns</span></div><div><strong>{learnerCount}</strong><span>Your responses</span></div><div><strong>{recordedCount}</strong><span>Voice recordings</span></div></div>
-          {rubricProfile && (
-            <section className="estimate-card adaptive-profile-card" aria-labelledby="adaptive-profile-heading">
-              <span className="eyebrow">PRACTICE REFLECTION</span>
-              <h2 id="adaptive-profile-heading">How did I do?</h2>
-              <p className="estimate-summary">Descriptive guidance based on what you demonstrated in this conversation.</p>
-              <div className="coaching-summary-grid">
-                <div><strong>Strengths</strong>{rubricProfile.strengths.map((item) => <p key={item}>{item}</p>)}</div>
-                <div><strong>Growth areas</strong>{rubricProfile.growthAreas.map((item) => <p key={item}>{item}</p>)}</div>
-              </div>
-              <div className="estimate-focus"><strong>Next conversation</strong><p>{rubricProfile.recommendation}</p></div>
-              <div className="stronger-phrase"><strong>Try this phrase</strong><p>“{rubricProfile.strongerPhrase}”</p></div>
-              {!rubricProfile.languageUse.targetLocaleTag.toLowerCase().startsWith("en") && <div className={`language-use-card ${rubricProfile.languageUse.status === "mixed_language" ? "attention" : ""}`}><strong>Target-language consistency</strong><p>{rubricProfile.languageUse.summary}</p>{rubricProfile.languageUse.englishWords.length > 0 && <p>English detected: {rubricProfile.languageUse.englishWords.join(", ")}</p>}<small>Transcript-based coaching check; speech recognition can occasionally mishear a word.</small></div>}
-              <div className="reflection-prompts"><strong>Reflect while you replay</strong><p>What did you do well?</p><p>What would you try differently next time?</p></div>
-            </section>
-          )}
           <div className="privacy-card"><strong>Coaching profile only</strong><p>{rubricProfile?.disclaimer ?? "This studio does not provide an official OPI rating, certification, pass/fail result, or readiness decision."}</p></div>
         </aside>
       </div>

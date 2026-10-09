@@ -96,7 +96,7 @@ interface SpeechRecognitionLike {
   stop(): void;
 }
 
-type MayaVoiceMode = "browser" | "text";
+type MayaVoiceMode = "api" | "browser" | "text";
 
 type ProcessingStage = "sending-response" | "saving-recording" | "maya-responding" | null;
 
@@ -178,6 +178,9 @@ export default function PracticePage() {
   const pausedRef = useRef(false);
   const recordingPausedAt = useRef(0);
   const recordingPausedDuration = useRef(0);
+  const mayaAudio = useRef<HTMLAudioElement | null>(null);
+  const mayaAudioCache = useRef(new Map<string, string>());
+  const mayaSpeechRun = useRef(0);
 
   const selectedPack = languagePacks.find((definition) => definition.pack.id === selectedPackId) ?? languagePacks[0];
   const turnState = isPaused
@@ -259,6 +262,11 @@ export default function PracticePage() {
     mediaStream.current?.getTracks().forEach((track) => track.stop());
     if (voiceCheckTimer.current !== null) window.clearInterval(voiceCheckTimer.current);
     closeRecorderAudioContext();
+    mayaSpeechRun.current += 1;
+    mayaAudio.current?.pause();
+    mayaAudio.current = null;
+    mayaAudioCache.current.forEach((url) => URL.revokeObjectURL(url));
+    mayaAudioCache.current.clear();
     window.speechSynthesis?.cancel();
     const celebrationContext = completionAudioContext.current;
     completionAudioContext.current = null;
@@ -360,30 +368,95 @@ export default function PracticePage() {
     }
   }
 
-  async function speakMayaText(text: string, localeTag: string, onFinished?: () => void): Promise<void> {
-    if (mayaVoiceMode === "text") { onFinished?.(); return; }
+  function stopMayaPlayback() {
+    mayaSpeechRun.current += 1;
+    mayaAudio.current?.pause();
+    mayaAudio.current = null;
+    window.speechSynthesis?.cancel();
+    setIsMayaSpeaking(false);
+  }
+
+  async function loadEnhancedMayaAudio(text: string, localeTag: string): Promise<string> {
+    const cacheKey = `${localeTag}\u0000${text}`;
+    const cached = mayaAudioCache.current.get(cacheKey);
+    if (cached) return cached;
+    const response = await fetch("/api/speech", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ text, localeTag }),
+    });
+    if (!response.ok) throw new Error("Enhanced voice unavailable");
+    const blob = await response.blob();
+    if (!blob.type.startsWith("audio/") || !blob.size) throw new Error("Invalid enhanced voice audio");
+    const url = URL.createObjectURL(blob);
+    mayaAudioCache.current.set(cacheKey, url);
+    return url;
+  }
+
+  function speakWithBrowserVoice(text: string, localeTag: string, run: number, onFinished?: () => void) {
     if (typeof window.speechSynthesis === "undefined" || typeof window.SpeechSynthesisUtterance === "undefined") {
-      setRevealedCoachTurns((current) => [...current]);
-      setIsMayaSpeaking(false);
-      setError("This browser cannot play Maya's local voice. Her question is shown so you can continue practicing.");
-      onFinished?.();
+      if (mayaSpeechRun.current === run) {
+        setMayaVoiceMode("text");
+        setIsMayaSpeaking(false);
+        setError("Maya's voice could not play. Her question is shown so you can continue practicing.");
+        onFinished?.();
+      }
       return;
     }
-    window.speechSynthesis.cancel();
-    const utterance = new SpeechSynthesisUtterance(text);
-    const mayaVoice = selectMayaVoice(await loadBrowserVoices(), localeTag);
-    utterance.voice = mayaVoice;
-    utterance.lang = mayaVoice?.lang ?? localeTag;
-    utterance.rate = 0.94;
-    utterance.pitch = 1.06;
-    utterance.onstart = () => setIsMayaSpeaking(true);
-    utterance.onend = () => { setIsMayaSpeaking(false); onFinished?.(); };
-    utterance.onerror = () => {
-      setIsMayaSpeaking(false);
-      setError("Maya's local voice could not play. Her question is shown so you can continue practicing.");
-      onFinished?.();
-    };
-    window.speechSynthesis.speak(utterance);
+    void loadBrowserVoices().then((voices) => {
+      if (mayaSpeechRun.current !== run) return;
+      const utterance = new SpeechSynthesisUtterance(text);
+      const mayaVoice = selectMayaVoice(voices, localeTag);
+      utterance.voice = mayaVoice;
+      utterance.lang = mayaVoice?.lang ?? localeTag;
+      utterance.rate = 0.94;
+      utterance.pitch = 1.06;
+      utterance.onstart = () => { if (mayaSpeechRun.current === run) setIsMayaSpeaking(true); };
+      utterance.onend = () => {
+        if (mayaSpeechRun.current !== run) return;
+        setIsMayaSpeaking(false);
+        onFinished?.();
+      };
+      utterance.onerror = () => {
+        if (mayaSpeechRun.current !== run) return;
+        setMayaVoiceMode("text");
+        setIsMayaSpeaking(false);
+        setError("Maya's voice could not play. Her question is shown so you can continue practicing.");
+        onFinished?.();
+      };
+      window.speechSynthesis.speak(utterance);
+    });
+  }
+
+  async function speakMayaText(text: string, localeTag: string, onFinished?: () => void): Promise<void> {
+    if (mayaVoiceMode === "text") { onFinished?.(); return; }
+    stopMayaPlayback();
+    const run = mayaSpeechRun.current;
+    try {
+      const audioUrl = await loadEnhancedMayaAudio(text, localeTag);
+      if (mayaSpeechRun.current !== run) return;
+      const audio = new Audio(audioUrl);
+      mayaAudio.current = audio;
+      audio.onplay = () => { if (mayaSpeechRun.current === run) setIsMayaSpeaking(true); };
+      audio.onended = () => {
+        if (mayaSpeechRun.current !== run) return;
+        mayaAudio.current = null;
+        setIsMayaSpeaking(false);
+        onFinished?.();
+      };
+      audio.onerror = () => {
+        if (mayaSpeechRun.current !== run) return;
+        mayaAudio.current = null;
+        speakWithBrowserVoice(text, localeTag, run, onFinished);
+      };
+      if (pausedRef.current) {
+        setIsMayaSpeaking(true);
+        return;
+      }
+      await audio.play();
+    } catch {
+      if (mayaSpeechRun.current === run) speakWithBrowserVoice(text, localeTag, run, onFinished);
+    }
   }
 
   function updateResponse(value: string) {
@@ -521,7 +594,10 @@ export default function PracticePage() {
     if (!isPaused) {
       pausedRef.current = true;
       setIsPaused(true);
-      if (isMayaSpeaking) window.speechSynthesis?.pause();
+      if (isMayaSpeaking) {
+        mayaAudio.current?.pause();
+        window.speechSynthesis?.pause();
+      }
       if (isRecording) {
         recordingPausedAt.current = Date.now();
         if (mediaRecorder.current?.state === "recording") mediaRecorder.current.pause();
@@ -532,7 +608,10 @@ export default function PracticePage() {
 
     pausedRef.current = false;
     setIsPaused(false);
-    if (isMayaSpeaking) window.speechSynthesis?.resume();
+    if (isMayaSpeaking) {
+      if (mayaAudio.current?.paused) void mayaAudio.current.play().catch(() => undefined);
+      else window.speechSynthesis?.resume();
+    }
     if (isRecording) {
       if (recordingPausedAt.current) recordingPausedDuration.current += Date.now() - recordingPausedAt.current;
       recordingPausedAt.current = 0;
@@ -544,8 +623,7 @@ export default function PracticePage() {
 
   function replayTurn(turn: ConversationTurn) {
     if (isRecording || busy || recordingFinalizing || isMayaSpeaking) return;
-    window.speechSynthesis?.cancel();
-    setIsMayaSpeaking(false);
+    stopMayaPlayback();
     const audioUrl = playbackUrls[turn.id];
     if (turn.role === "learner" && audioUrl) { void new Audio(audioUrl).play(); return; }
     if (turn.role === "coach") {
@@ -672,11 +750,12 @@ export default function PracticePage() {
       });
       const data = await request.json() as { error?: string; snapshot: PracticeSnapshot; storageMode: PracticeStorageMode };
       if (!request.ok) throw new Error(data.error ?? "Could not start practice.");
+      const canUseEnhancedVoice = typeof window.Audio !== "undefined";
       const canUseBrowserVoice = typeof window.speechSynthesis !== "undefined"
         && typeof window.SpeechSynthesisUtterance !== "undefined";
-      const nextVoiceMode: MayaVoiceMode = canUseBrowserVoice ? "browser" : "text";
+      const nextVoiceMode: MayaVoiceMode = canUseEnhancedVoice ? "api" : canUseBrowserVoice ? "browser" : "text";
       setMayaVoiceMode(nextVoiceMode);
-      const voiceError = canUseBrowserVoice ? "" : "This browser cannot play Maya's local voice. Her question is shown so you can continue practicing.";
+      const voiceError = canUseEnhancedVoice || canUseBrowserVoice ? "" : "This browser cannot play Maya's voice. Her question is shown so you can continue practicing.";
       const opening = data.snapshot.turns.find((turn) => turn.role === "coach");
       setRevealedCoachTurns(nextVoiceMode === "text" && opening ? [opening.id] : []);
       setCanRecord(false);
@@ -789,7 +868,9 @@ export default function PracticePage() {
       const data = await request.json() as { error?: string; completed?: boolean; turns?: ConversationTurn[] };
       if (!request.ok) throw new Error(data.error ?? "Could not finish this practice.");
       const closingTurns = data.turns ?? [];
-      setIsPaused(false); pausedRef.current = false; window.speechSynthesis?.resume();
+      setIsPaused(false); pausedRef.current = false;
+      if (mayaAudio.current?.paused) void mayaAudio.current.play().catch(() => undefined);
+      else window.speechSynthesis?.resume();
       setCompleted(true); setSnapshot((current) => current ? { ...current, status: "completed", turns: [...current.turns, ...closingTurns] } : current);
       speakCoachTurn(closingTurns.find((turn) => turn.role === "coach"), playCompletionClap);
     } catch (caught) { setError(caught instanceof Error ? caught.message : "Could not finish this practice."); }

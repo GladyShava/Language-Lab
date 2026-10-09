@@ -1,4 +1,5 @@
 import { PDFDocument, PDFPage, PDFFont, StandardFonts, rgb } from "pdf-lib";
+import fontkit from "@pdf-lib/fontkit";
 import { evaluateAdaptiveConversation, rubricDimensionDefinitions } from "@/lib/conversation/adaptive-rubric";
 import { inferPromptKind } from "@/lib/conversation/response-assessment";
 import type { ConversationTurn } from "@/lib/conversation/types";
@@ -9,6 +10,7 @@ interface PracticeReportInput {
   snapshot: PracticeSnapshot;
   languageName: string;
   recordings: readonly SavedRecording[];
+  unicodeFontBytes?: Uint8Array;
 }
 
 const navy = rgb(0, 49 / 255, 92 / 255);
@@ -18,30 +20,38 @@ const muted = rgb(91 / 255, 111 / 255, 132 / 255);
 const pale = rgb(245 / 255, 247 / 255, 250 / 255);
 const white = rgb(1, 1, 1);
 
-function safePdfText(value: string): string {
-  return value
+function safePdfText(value: string, preserveUnicode = false): string {
+  const normalized = value
     .replace(/[‘’]/g, "'")
     .replace(/[“”]/g, '"')
     .replace(/[–—]/g, "-")
-    .replace(/…/g, "...")
+    .replace(/…/g, "...");
+  if (preserveUnicode) return normalized.normalize("NFC");
+  return normalized
     .normalize("NFKD")
     .replace(/[\u0300-\u036f]/g, "")
     .replace(/[^\x20-\x7E\n]/g, "?");
 }
 
-function wrapText(text: string, font: PDFFont, size: number, maxWidth: number): string[] {
-  const paragraphs = safePdfText(text).split(/\n/);
+function wrapText(text: string, font: PDFFont, size: number, maxWidth: number, preserveUnicode = false): string[] {
+  const paragraphs = safePdfText(text, preserveUnicode).split(/\n/);
   const lines: string[] = [];
   for (const paragraph of paragraphs) {
     const words = paragraph.split(/\s+/).filter(Boolean);
     if (!words.length) { lines.push(""); continue; }
-    let line = words[0];
-    for (const word of words.slice(1)) {
-      const candidate = `${line} ${word}`;
-      if (font.widthOfTextAtSize(candidate, size) <= maxWidth) line = candidate;
-      else { lines.push(line); line = word; }
+    let line = "";
+    for (const word of words) {
+      const candidate = line ? `${line} ${word}` : word;
+      if (font.widthOfTextAtSize(candidate, size) <= maxWidth) { line = candidate; continue; }
+      if (line) { lines.push(line); line = ""; }
+      if (font.widthOfTextAtSize(word, size) <= maxWidth) { line = word; continue; }
+      for (const character of Array.from(word)) {
+        const characterCandidate = `${line}${character}`;
+        if (font.widthOfTextAtSize(characterCandidate, size) <= maxWidth) line = characterCandidate;
+        else { if (line) lines.push(line); line = character; }
+      }
     }
-    lines.push(line);
+    if (line) lines.push(line);
   }
   return lines;
 }
@@ -84,8 +94,12 @@ function nextPracticeFocus(turns: readonly ConversationTurn[]): string {
 
 export async function createPracticeReport(input: PracticeReportInput): Promise<Uint8Array> {
   const pdf = await PDFDocument.create();
+  if (input.unicodeFontBytes) pdf.registerFontkit(fontkit);
   const regular = await pdf.embedFont(StandardFonts.Helvetica);
   const bold = await pdf.embedFont(StandardFonts.HelveticaBold);
+  const unicodeFont = input.unicodeFontBytes ? await pdf.embedFont(input.unicodeFontBytes, { subset: true }) : null;
+  const bodyFont = unicodeFont ?? regular;
+  const preservesUnicode = Boolean(unicodeFont);
   pdf.setTitle("Beyond Hello - Practice and Reflection Report");
   pdf.setAuthor("Beyond Hello");
   pdf.setSubject("Practice and reflection report");
@@ -119,9 +133,9 @@ export async function createPracticeReport(input: PracticeReportInput): Promise<
   };
   const drawWrapped = (text: string, options: { size?: number; font?: PDFFont; color?: ReturnType<typeof rgb>; indent?: number; width?: number; gap?: number } = {}) => {
     const size = options.size ?? 10;
-    const selectedFont = options.font ?? regular;
+    const selectedFont = options.font ?? bodyFont;
     const indent = options.indent ?? 0;
-    drawLines(wrapText(text, selectedFont, size, options.width ?? contentWidth - indent), { ...options, size, font: selectedFont, indent });
+    drawLines(wrapText(text, selectedFont, size, options.width ?? contentWidth - indent, selectedFont === bodyFont && preservesUnicode), { ...options, size, font: selectedFont, indent });
   };
   const section = (title: string) => {
     ensureSpace(38);
@@ -141,7 +155,7 @@ export async function createPracticeReport(input: PracticeReportInput): Promise<
   const recordedDuration = input.recordings.reduce((total, recording) => total + recording.durationMs, 0);
   const rubricProfile = evaluateAdaptiveConversation(turns, input.snapshot.localeTag);
 
-  page.drawText(safePdfText(input.snapshot.title), { x: margin, y, size: 24, font: bold, color: navy });
+  page.drawText(safePdfText(input.snapshot.title, preservesUnicode), { x: margin, y, size: 24, font: bodyFont, color: navy });
   y -= 26;
   drawWrapped(`${input.languageName} practice - ${startedAt.toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" })}`, { size: 11, color: muted });
 
@@ -162,7 +176,9 @@ export async function createPracticeReport(input: PracticeReportInput): Promise<
   y -= 86;
 
   section("Adaptive coaching profile");
-  drawWrapped("How did I do?", { size: 15, font: bold, color: navy });
+  drawWrapped(`Current coaching stage: ${rubricProfile.currentStage}`, { size: 15, font: bold, color: navy });
+  drawWrapped(`Overall practice profile: ${rubricProfile.overallScore.toFixed(1)} / 5`, { size: 11, font: bold, color: navy });
+  drawWrapped(`Based on ${rubricProfile.turnsAnalyzed} ${rubricProfile.turnsAnalyzed === 1 ? "response" : "responses"}. This is a weighted coaching profile, not a test score.`, { size: 9, color: muted });
   drawWrapped(rubricProfile.disclaimer, { size: 8.5, color: muted });
   y -= 6;
   for (const definition of rubricDimensionDefinitions) {
@@ -173,6 +189,25 @@ export async function createPracticeReport(input: PracticeReportInput): Promise<
     drawWrapped(dimension.evidence, { size: 9, color: muted, indent: 10, width: contentWidth - 10 });
     y -= 4;
   }
+
+  section("Strengths");
+  for (const strength of rubricProfile.strengths) {
+    drawWrapped(`- ${strength}`, { size: 10 });
+    y -= 4;
+  }
+
+  section("Growth areas");
+  for (const growthArea of rubricProfile.growthAreas) {
+    drawWrapped(`- ${growthArea}`, { size: 10 });
+    y -= 4;
+  }
+
+  section("Next conversation");
+  drawWrapped(rubricProfile.recommendation || nextPracticeFocus(turns), { size: 11 });
+  y -= 8;
+  drawWrapped(`Stronger phrase to try: "${rubricProfile.strongerPhrase}"`, { size: 10, font: bodyFont, color: navy });
+  y -= 8;
+  drawWrapped("Replay one response and record it again with a clear opening, one supporting detail and a closing thought.", { size: 9, color: muted });
 
   if (!rubricProfile.languageUse.targetLocaleTag.toLowerCase().startsWith("en")) {
     section("Target-language consistency");
@@ -187,17 +222,6 @@ export async function createPracticeReport(input: PracticeReportInput): Promise<
   drawWrapped(topics.length ? topics.join(" - ") : "Personal conversation and spontaneous speaking", { size: 11 });
   y -= 4;
   drawWrapped("This is a practice record, not a score, official evaluation, proficiency label or readiness decision.", { size: 9, color: muted });
-
-  section("Suggested next practice");
-  drawWrapped(rubricProfile.recommendation || nextPracticeFocus(turns), { size: 11 });
-  y -= 8;
-  drawWrapped(`Stronger phrase to try: "${rubricProfile.strongerPhrase}"`, { size: 10, font: bold, color: navy });
-  y -= 6;
-  drawWrapped(`Strengths: ${rubricProfile.strengths.join(" ")}`, { size: 9, color: muted });
-  y -= 4;
-  drawWrapped(`Growth areas: ${rubricProfile.growthAreas.join(" ")}`, { size: 9, color: muted });
-  y -= 8;
-  drawWrapped("Replay your recording and choose one response to repeat. Focus on communicating your meaning naturally rather than memorizing a perfect answer.", { size: 10, color: muted });
 
   section("Reflection checklist");
   drawWrapped("1. Listen to your response once without reading the transcript.", { size: 10 });
