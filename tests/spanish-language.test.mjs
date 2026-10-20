@@ -47,6 +47,7 @@ test("asks natural Spanish questions about the learner's actual interests, inclu
   assert.doesNotMatch(createSpanishFollowUp(familyDetail, "description"), /tradición familiar|juntos en tu familia/);
   familyDetail.push(turn("coach", "¿Qué consejo de tu abuela recuerdas cuando cocinas?"), turn("learner", "Sí."));
   assert.match(createSpanishFollowUp(familyDetail, "description"), /cocinar|plato|cocinas/);
+  assert.doesNotMatch(createSpanishFollowUp(familyDetail, "description"), /cómo aprendiste/i);
   const changedTopic = [turn("learner", "Trabajo en una oficina."), turn("coach", "¿Cómo es un día normal en tu trabajo?"), turn("learner", "No trabajo ahora, soy estudiante.")];
   assert.match(createSpanishFollowUp(changedTopic, "description"), /estudios|clases/);
   for (let index = 0; index < 6; index++) {

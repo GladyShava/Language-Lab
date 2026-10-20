@@ -76,7 +76,9 @@ export function createSpanishFollowUp(turns: readonly ConversationTurn[], stage:
         : [];
   // Brief answers are valid; deepen the topic rather than rejecting their word count.
   const comfortable = latest.split(/\s+/).length < 6;
-  return pick([...connected, ...(comfortable ? [] : probes), ...topic.questions,
+  const cookingOriginKnown = topic.subject === "la cocina" && learnerTurns.some(turn => /aprendí|empecé|comencé|me enseñ(?:ó|aron)/i.test(turn.text));
+  const unanswered = topic.questions.filter(question => !(cookingOriginKnown && question.startsWith("¿Cómo aprendiste")));
+  return pick([...connected, ...(comfortable ? [] : probes), ...unanswered,
     `¿Qué te gustaría aprender o mejorar en relación con ${topic.subject}?`,
     `¿Qué consejo darías a alguien que quisiera saber más sobre ${topic.subject}?`,
     `¿Cómo te gustaría que cambiara tu relación con ${topic.subject} en el futuro?`,
