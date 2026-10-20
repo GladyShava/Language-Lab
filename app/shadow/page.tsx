@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { loadBrowserVoices, selectMayaVoice } from "@/lib/speech/browser-voice";
 import { getDefaultLanguagePackDefinition, getLanguagePackDefinition, listLanguagePackDefinitions } from "@/lib/language-packs/registry";
 
 const defaultLanguagePack = getDefaultLanguagePackDefinition();
@@ -12,6 +13,8 @@ const resolveLanguagePack = (value: string | null | undefined) => value
 
 export default function FluentExamplePage() {
   const [languagePackId, setLanguagePackId] = useState(defaultLanguagePack.pack.id);
+  const [voiceNote, setVoiceNote] = useState("");
+  const voiceRun = useRef(0);
   const languagePack = getLanguagePackDefinition(languagePackId) ?? defaultLanguagePack;
   const [objectiveId, setObjectiveId] = useState(defaultLanguagePack.objectives[0].id);
   const objective = languagePack.objectives.find((item) => item.id === objectiveId) ?? languagePack.objectives[0];
@@ -76,12 +79,19 @@ export default function FluentExamplePage() {
 
     void loadActiveLanguage();
   }, []);
-  useEffect(() => () => window.speechSynthesis.cancel(), []);
+  useEffect(() => () => { voiceRun.current += 1; window.speechSynthesis?.cancel(); }, []);
 
-  function listen(rate: number) {
-    window.speechSynthesis.cancel();
+  function stopVoice() { voiceRun.current += 1; window.speechSynthesis?.cancel(); }
+
+  async function listen(rate: number) {
+    stopVoice(); setVoiceNote("");
+    const run = voiceRun.current;
+    const voice = selectMayaVoice(await loadBrowserVoices(), languagePack.pack.localeTag);
+    if (voiceRun.current !== run) return;
+    if (!voice || typeof window.SpeechSynthesisUtterance === "undefined") { setVoiceNote("A voice for this language is unavailable on this device. You can still read the example below."); return; }
     const utterance = new SpeechSynthesisUtterance(example.content);
-    utterance.lang = languagePack.pack.localeTag;
+    utterance.voice = voice;
+    utterance.lang = voice.lang;
     utterance.rate = rate;
     window.speechSynthesis.speak(utterance);
   }
@@ -92,14 +102,15 @@ export default function FluentExamplePage() {
       <div className="shadow-layout fluent-only-layout">
         <aside className="shadow-prompt-list">
           <span className="eyebrow">CHOOSE A PROMPT</span>
-          {languagePack.objectives.map((item, index) => <button key={item.id} className={item.id === objective.id ? "selected" : ""} onClick={() => { window.speechSynthesis.cancel(); setObjectiveId(item.id); }}><span>{String(index + 1).padStart(2, "0")}</span><span><strong>{item.title}</strong><small>{item.prompt}</small></span></button>)}
+          {languagePack.objectives.map((item, index) => <button key={item.id} className={item.id === objective.id ? "selected" : ""} onClick={() => { stopVoice(); setVoiceNote(""); setObjectiveId(item.id); }}><span>{String(index + 1).padStart(2, "0")}</span><span><strong>{item.title}</strong><small>{item.prompt}</small></span></button>)}
         </aside>
         <section className="fluent-only-workspace">
           <div className="fluent-example-card">
             <span className="eyebrow eyebrow-light">MODEL RESPONSE</span>
             <h2>{example.title}</h2>
             <blockquote>{example.content}</blockquote>
-            <div className="fluent-actions"><button className="button button-gold" onClick={() => listen(1)}>Listen</button><button className="button shadow-stop" onClick={() => listen(0.72)}>Listen slowly</button><button className="text-link fluent-stop-link" onClick={() => window.speechSynthesis.cancel()}>Stop</button></div>
+            <div className="fluent-actions"><button className="button button-gold" onClick={() => void listen(1)}>Listen</button><button className="button shadow-stop" onClick={() => void listen(0.72)}>Listen slowly</button><button className="text-link fluent-stop-link" onClick={stopVoice}>Stop</button></div>
+            {voiceNote && <p role="status">{voiceNote}</p>}
           </div>
           <div className="fluent-note"><span aria-hidden="true">◐</span><div><strong>Listen for the pattern</strong><p>{example.coachingNote}</p></div></div>
         </section>

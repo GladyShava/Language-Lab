@@ -6,6 +6,7 @@ import { evaluateAdaptiveConversation, rubricDimensionDefinitions, type Adaptive
 import { readPracticeBackup, savePracticeBackup } from "@/lib/practice/recovery";
 import type { PracticeSnapshot } from "@/lib/practice/store";
 import { readLocalRecording } from "@/lib/practice/local-recordings";
+import { loadBrowserVoices, selectMayaVoice } from "@/lib/speech/browser-voice";
 import { getDefaultLanguagePackDefinition, getLanguagePackDefinition } from "@/lib/language-packs/registry";
 
 const defaultLanguagePack = getDefaultLanguagePackDefinition();
@@ -147,13 +148,17 @@ export default function TranscriptPage() {
       setPlayingId(null);
       return Promise.resolve();
     }
-    return new Promise((resolve) => {
+    return loadBrowserVoices().then(voices => new Promise<void>((resolve) => {
+      if (playbackRun.current !== run) { resolve(); return; }
+      const voice = selectMayaVoice(voices, languagePack.pack.localeTag);
+      if (!voice) { setLoadNote("A voice for this language is unavailable on this device. The transcript is still available."); setPlayingId(null); resolve(); return; }
       const utterance = new SpeechSynthesisUtterance(line.text);
-      utterance.lang = languagePack.pack.localeTag;
+      utterance.voice = voice;
+      utterance.lang = voice.lang;
       utterance.onend = () => { if (playbackRun.current === run) setPlayingId(null); resolve(); };
       utterance.onerror = () => resolve();
       window.speechSynthesis.speak(utterance);
-    });
+    }));
   }
 
   async function playLine(line: TranscriptLine) {

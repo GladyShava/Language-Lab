@@ -7,6 +7,7 @@ import { defaultLanguagePackId, listLanguagePackDefinitions } from "@/lib/langua
 import type { PracticeStorageMode } from "@/lib/practice/store";
 import { readPracticeBackup, savePracticeBackup } from "@/lib/practice/recovery";
 import { readLocalRecording, saveLocalRecording } from "@/lib/practice/local-recordings";
+import { loadBrowserVoices, selectMayaVoice } from "@/lib/speech/browser-voice";
 
 const languagePacks = listLanguagePackDefinitions();
 
@@ -28,36 +29,6 @@ const readinessCards = [
     description: "When you finish speaking, select Send Response. Maya will listen and continue the conversation.",
   },
 ] as const;
-
-const mayaFemaleVoicePattern = /\b(Samantha|Zira|Aria|Jenny|Susan|Hazel|Victoria|Karen|Moira|Fiona|Tessa|Serena|Ava|Allison|Joana|Luciana|Helena|Sabina|Hortense|Hedda|Elsa|Maria|Irina|Heera|Kalpana|Lekha|Ayumi|Haruka|Kyoko|Huihui|Ting-Ting|Mei-Jia|Yuna|Sora|Laura|Monica|Paulina|Amelie|Amélie|Audrey|Julie|Female)\b/i;
-
-async function loadBrowserVoices(): Promise<SpeechSynthesisVoice[]> {
-  const initialVoices = window.speechSynthesis.getVoices();
-  if (initialVoices.length) return initialVoices;
-  await new Promise<void>((resolve) => {
-    const timeout = window.setTimeout(resolve, 300);
-    window.speechSynthesis.addEventListener("voiceschanged", () => {
-      window.clearTimeout(timeout);
-      resolve();
-    }, { once: true });
-  });
-  return window.speechSynthesis.getVoices();
-}
-
-function selectMayaVoice(voices: SpeechSynthesisVoice[], localeTag: string): SpeechSynthesisVoice | null {
-  const normalizedLocale = localeTag.toLowerCase().replaceAll("_", "-");
-  const language = normalizedLocale.split("-")[0];
-  return [...voices].sort((left, right) => {
-    const score = (voice: SpeechSynthesisVoice) => {
-      const voiceLocale = voice.lang.toLowerCase().replaceAll("_", "-");
-      return (mayaFemaleVoicePattern.test(voice.name) ? 100 : 0)
-        + (voiceLocale === normalizedLocale ? 40 : voiceLocale.startsWith(`${language}-`) || voiceLocale === language ? 25 : 0)
-        + (voice.localService ? 4 : 0)
-        + (voice.default ? 1 : 0);
-    };
-    return score(right) - score(left);
-  })[0] ?? null;
-}
 
 interface PracticeSnapshot {
   sessionId: string;
@@ -456,10 +427,15 @@ export default function PracticePage() {
       if (mayaSpeechRun.current !== run) return;
       const utterance = new SpeechSynthesisUtterance(text);
       const mayaVoice = selectMayaVoice(voices, localeTag);
+      if (!mayaVoice) {
+        setMayaVoiceMode("text"); setIsMayaSpeaking(false);
+        setError("A voice for your practice language is unavailable on this device. Maya's question is shown so you can continue.");
+        onFinished?.(); return;
+      }
       utterance.voice = mayaVoice;
       utterance.lang = mayaVoice?.lang ?? localeTag;
       utterance.rate = 0.94;
-      utterance.pitch = 1.06;
+      utterance.pitch = 1;
       utterance.onstart = () => { if (mayaSpeechRun.current === run) setIsMayaSpeaking(true); };
       utterance.onend = () => {
         if (mayaSpeechRun.current !== run) return;
@@ -1104,7 +1080,7 @@ export default function PracticePage() {
           {isPaused && <div className="conversation-paused-notice" role="status"><strong>Conversation paused</strong><span>Maya, the timer, and your recording will continue when you select Resume Conversation.</span></div>}
           <div className="message-stream" aria-live="polite">
             {snapshot.turns.map((turn) => {
-              const coachTextHidden = turn.role === "coach" && !revealedCoachTurns.includes(turn.id);
+              const coachTextHidden = turn.role === "coach" && mayaVoiceMode !== "text" && !revealedCoachTurns.includes(turn.id);
               return <div className={`message-row ${turn.role}`} key={turn.id}>
                 <span className="message-speaker">{turn.role === "coach" ? "Maya" : "You"}</span>
                 <div className={coachTextHidden ? "message-bubble audio-question" : "message-bubble"}><p>{coachTextHidden ? "Listen to Maya’s question" : turn.text}</p>{turn.role === "learner" && playbackUrls[turn.id] && <audio className="inline-audio" controls src={playbackUrls[turn.id]} preload="metadata" />}<div className="message-meta"><button type="button" disabled={isRecording || busy || recordingFinalizing || isMayaSpeaking || isPaused} onClick={() => replayTurn(turn)}>{turn.role === "learner" && playbackUrls[turn.id] ? "Replay my voice" : "Listen Again"}</button>{coachTextHidden && <button type="button" onClick={() => setRevealedCoachTurns((current) => [...current, turn.id])}>Show Words</button>}</div></div>

@@ -36,9 +36,10 @@ function localeRoot(localeTag: string) {
   return localeTag.toLocaleLowerCase().split(/[-_]/)[0];
 }
 
-function detectedEnglishWords(text: string): string[] {
-  const words = text.toLocaleLowerCase().match(/[a-z]+(?:'[a-z]+)?/g) ?? [];
-  return [...new Set(words.filter((word) => clearEnglishWords.has(word)))];
+function detectedEnglishWords(text: string, localeTag: string): string[] {
+  const words = text.toLocaleLowerCase().match(/\p{L}+(?:['’]\p{L}+)?/gu) ?? [];
+  const spanishMusic = localeRoot(localeTag) === "es" && /música|musical|piano|escala|nota|acorde/i.test(text);
+  return [...new Set(words.filter(word => clearEnglishWords.has(word) && !(spanishMusic && word === "do")))];
 }
 
 export function analyzeResponseLanguageUse(text: string, localeTag: string): TargetLanguageUseObservation {
@@ -50,7 +51,7 @@ export function analyzeResponseLanguageUse(text: string, localeTag: string): Tar
   if (root === "en") {
     return { status: "on_target", targetLanguage, targetLocaleTag: localeTag, englishWords: [], affectedTurns: 0, analyzedTurns: 1, summary: "English was the selected practice language." };
   }
-  const englishWords = detectedEnglishWords(text);
+  const englishWords = detectedEnglishWords(text, localeTag);
   if (englishWords.length) {
     return { status: "mixed_language", targetLanguage, targetLocaleTag: localeTag, englishWords, affectedTurns: 1, analyzedTurns: 1, summary: `Clear English ${englishWords.length === 1 ? "word" : "words"} detected in a ${targetLanguage} response: ${englishWords.join(", ")}.` };
   }

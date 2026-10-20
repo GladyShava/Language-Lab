@@ -4,6 +4,7 @@ import { evaluateAdaptiveConversation } from "./adaptive-rubric";
 import { assessResponse, countAnsweredResponses, createRepairResponse } from "./response-assessment";
 import { getLocalizedInterviewScript } from "./interview-scripts";
 import { createLocalizedGroundedPrompt } from "./localized-grounding";
+import { createSpanishFollowUp } from "./spanish-prompts";
 import { selectInterviewStage, type InterviewStage } from "./time-plan";
 import { analyzeResponseLanguageUse, createTargetLanguageRedirect } from "./target-language";
 
@@ -70,6 +71,12 @@ export class MockConversationProvider implements ConversationProvider {
       }
       const latestLanguageUse = analyzeResponseLanguageUse(latest, context.localeTag);
       if (latestLanguageUse.status === "mixed_language") return createTargetLanguageRedirect(context.localeTag, latestLanguageUse.englishWords);
+      if (/^es(?:-|$)/i.test(context.localeTag)) {
+        const answeredCount = learnerTurns.filter(turn => !transcriptUnavailable(turn.text) && /\p{L}/u.test(turn.text)).length;
+        const profile = evaluateAdaptiveConversation(context.turns, context.localeTag);
+        const stage = adjustInterviewStage(selectInterviewStage(context.timing, answeredCount), profile.currentStage);
+        return createSpanishFollowUp(context.turns, stage);
+      }
       if (responseUnits(latest, context.localeTag) < 6) return localized.elaborate;
       const answeredCount = learnerTurns.filter((turn) => !transcriptUnavailable(turn.text) && analyzeResponseLanguageUse(turn.text, context.localeTag).status !== "mixed_language" && responseUnits(turn.text, context.localeTag) >= 6).length;
       const profile = evaluateAdaptiveConversation(context.turns, context.localeTag);

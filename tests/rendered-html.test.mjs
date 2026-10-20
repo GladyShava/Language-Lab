@@ -245,9 +245,9 @@ test("keeps the Phase 4 live conversation focused, stateful, and recoverable", a
   assert.match(source, /Listen to Maya&apos;s question, then answer naturally in your own words/i);
   assert.match(source, /Listen Again/i);
   assert.match(source, /Show Words/i);
-  assert.match(source, /mayaFemaleVoicePattern/i);
+  assert.match(source, /selectMayaVoice.*lib\/speech\/browser-voice/i);
   assert.match(source, /utterance\.voice = mayaVoice/i);
-  assert.match(source, /utterance\.pitch = 1\.06/i);
+  assert.match(source, /utterance\.pitch = 1;/i);
   assert.match(source, /Send Response/i);
   assert.match(source, /End Conversation/i);
   assert.match(source, /audioBitsPerSecond:\s*48_000/i);
@@ -487,7 +487,7 @@ test("runs localized practice turns for Spanish and Japanese packs", async () =>
       name: "Ana",
       answer: "Soy estudiante y me gusta aprender idiomas con mis amigos.",
       opening: /Hola Ana|cuéntame sobre ti/i,
-      followUp: /Soy estudiante.*aprender idiomas/i,
+      followUp: /idiomas|aprender/i,
     },
     {
       languagePackId: "lang_ja_jp_v1",
@@ -557,6 +557,29 @@ test("advances through unused localized questions after answered turns", async (
     questions.push(continued.turns[1].text);
   }
 
+  assert.equal(new Set(questions).size, questions.length);
+});
+
+test("continues a Spanish conversation after brief replies and retains the cooking context", async () => {
+  const worker = await loadWorker("natural-spanish-dialogue");
+  const start = await worker.fetch(new Request("http://localhost/api/practice", {
+    method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ action: "start", languagePackId: "lang_es_es_v1", participantName: "Ana", practiceMinutes: 15 }),
+  }), runtimeEnv, runtimeContext);
+  const session = await start.json();
+  const questions = [];
+  for (const [text, topic] of [["Soy estudiante.", /estudios|clases/], ["Me gusta cocinar.", /cocinar|plato|cocinas/], ["Porque me relaja.", /cocinar|plato|cocinas|cocina/]]) {
+    const response = await worker.fetch(new Request("http://localhost/api/practice", {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ action: "respond", sessionId: session.snapshot.sessionId, storageMode: session.storageMode, text, practiceMinutes: 15, remainingSeconds: 800 }),
+    }), runtimeEnv, runtimeContext);
+    assert.equal(response.status, 200);
+    const data = await response.json();
+    const question = data.turns[1].text;
+    assert.match(question, topic);
+    assert.doesNotMatch(question, /[«»“”]|necesito.*detalle|responde solo|Qué disfrutas de/i);
+    questions.push(question);
+  }
   assert.equal(new Set(questions).size, questions.length);
 });
 
