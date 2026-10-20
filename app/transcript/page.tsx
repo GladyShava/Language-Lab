@@ -25,6 +25,7 @@ export default function TranscriptPage() {
   const [transcript, setTranscript] = useState<TranscriptLine[]>([]);
   const [loadedSession, setLoadedSession] = useState(false);
   const [sessionTitle, setSessionTitle] = useState("Your practice conversation");
+  const [sessionDate, setSessionDate] = useState("");
   const [loading, setLoading] = useState(false);
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<TranscriptFilter>("all");
@@ -106,6 +107,7 @@ export default function TranscriptPage() {
       savePracticeBackup({ ...backup, snapshot: sessionData.snapshot, mode: mode === "d1" ? "d1" : "memory" });
       setReportHref(`/api/practice/report?sessionId=${encodeURIComponent(sessionId)}&mode=${encodeURIComponent(mode)}`);
       setSessionTitle(sessionData.snapshot.title);
+      setSessionDate(new Date(sessionData.snapshot.turns[0]?.occurredAt ?? Date.now()).toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" }));
       setLanguagePackId(sessionData.snapshot.languagePackId);
       setRubricProfile(sessionData.rubricProfile);
       setTranscript(lines); setLoadedSession(true); setActive(0);
@@ -222,15 +224,15 @@ export default function TranscriptPage() {
       {simpleFeedback && (
         <section className="practice-reflection-report" aria-labelledby="practice-reflection-heading">
           <div className="report-heading">
-            <div><span className="eyebrow">PRACTICE REFLECTION</span><h2 id="practice-reflection-heading">Your conversation report</h2><p>A simple summary and one next step for your practice.</p></div>
+            <div><span className="eyebrow">BEYOND HELLO</span><h2 id="practice-reflection-heading">Language Practice Report</h2><p>Session summary and development plan</p></div>
             <button type="button" className="button button-gold" onClick={() => void downloadReport()} disabled={!reportHref || downloadingReport}>{downloadingReport ? "Preparing PDF..." : "Download PDF report"}</button>
           </div>
 
-          <p className="report-session-summary"><strong>Your session:</strong> {languagePack.pack.displayName} · {learnerCount} {learnerCount === 1 ? "response" : "responses"}</p>
-          <div className="report-insight-grid">
-            <article><h3>What went well</h3>{simpleFeedback.strengths.map(item => <p key={item}>{item}</p>)}</article>
-            <article><h3>One thing to improve</h3><p>{simpleFeedback.improvement}</p></article>
-            <article className="report-next-step"><h3>Try this next time</h3><p>{simpleFeedback.nextStep}</p></article>
+          <div className="formal-report-body">
+            <section className="formal-report-section"><h3><span>01</span>Session Overview</h3><dl className="formal-report-metadata"><div><dt>Practice language</dt><dd>{languagePack.pack.displayName}</dd></div><div><dt>Session date</dt><dd>{sessionDate}</dd></div><div><dt>Responses</dt><dd>{learnerCount}</dd></div></dl></section>
+            <section className="formal-report-section"><h3><span>02</span>Observed Strengths</h3><ul>{simpleFeedback.strengths.map(item => <li key={item}>{item}</li>)}</ul></section>
+            <section className="formal-report-section"><h3><span>03</span>Development Priority</h3><p>{simpleFeedback.improvement}</p></section>
+            <section className="formal-report-section formal-report-action"><h3><span>04</span>Recommended Practice</h3><p>{simpleFeedback.nextStep}</p></section>
           </div>
           <p className="report-disclaimer">{simpleReportDisclaimer}</p>
         </section>

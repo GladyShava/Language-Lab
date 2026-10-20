@@ -49,41 +49,60 @@ export async function createPracticeReport(input: PracticeReportInput): Promise<
   const page = pdf.addPage([612, 792]);
   const margin = 48;
   const width = 516;
-  let y = 682;
-  pdf.setTitle("Beyond Hello - Your practice report");
+  let y = 659;
+  pdf.setTitle("Beyond Hello - Language Practice Report");
   pdf.setAuthor("Beyond Hello");
-  page.drawRectangle({ x: 0, y: 712, width: 612, height: 80, color: navy });
-  page.drawRectangle({ x: 0, y: 708, width: 612, height: 4, color: gold });
-  page.drawText("BEYOND HELLO", { x: margin, y: 761, size: 10, font: bold, color: gold });
-  page.drawText("Your practice report", { x: margin, y: 733, size: 24, font: bold, color: rgb(1, 1, 1) });
-  const drawWrapped = (text: string, size = 12, color = ink) => {
-    for (const line of wrapText(safePdfText(text, preserveUnicode), bodyFont, size, width)) {
-      page.drawText(line, { x: margin, y, size, font: bodyFont, color });
+  page.drawText("BEYOND HELLO", { x: margin, y: 750, size: 10, font: bold, color: navy });
+  page.drawText("Language Practice Report", { x: margin, y: 717, size: 23, font: bold, color: navy });
+  page.drawText("Session summary and development plan", { x: margin, y: 696, size: 11, font: regular, color: muted });
+  page.drawRectangle({ x: margin, y: 679, width, height: 2, color: gold });
+  const drawWrapped = (text: string, size = 11, color = ink, indent = 0) => {
+    for (const line of wrapText(safePdfText(text, preserveUnicode), bodyFont, size, width - indent)) {
+      page.drawText(line, { x: margin + indent, y, size, font: bodyFont, color });
       y -= size + 6;
     }
   };
+  let sectionNumber = 0;
   const section = (title: string) => {
-    y -= 22;
-    page.drawText(title, { x: margin, y, size: 14, font: bold, color: navy });
-    y -= 10;
-    page.drawRectangle({ x: margin, y, width, height: 1, color: gold });
     y -= 23;
+    page.drawText(String(++sectionNumber).padStart(2, "0"), { x: margin, y, size: 10, font: bold, color: muted });
+    page.drawText(title, { x: margin + 29, y, size: 13, font: bold, color: navy });
+    y -= 11;
+    page.drawRectangle({ x: margin, y, width, height: 0.6, color: rgb(0.84, 0.88, 0.91) });
+    y -= 25;
   };
   const feedback = createSimpleFeedback(evaluateAdaptiveConversation(input.snapshot.turns, input.snapshot.localeTag));
   const responses = input.snapshot.turns.filter(turn => turn.role === "learner").length;
   const date = new Date(input.snapshot.turns[0]?.occurredAt ?? Date.now()).toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" });
-  section("Your session");
-  drawWrapped(`${input.languageName} | ${date} | ${responses} ${responses === 1 ? "response" : "responses"}`, 11, muted);
-  section("What went well");
-  for (const strength of feedback.strengths) { drawWrapped(`- ${strength}`); y -= 5; }
-  section("One thing to improve");
+  section("Session Overview");
+  const fields = [["PRACTICE LANGUAGE", input.languageName], ["SESSION DATE", date], ["RESPONSES", String(responses)]];
+  page.drawRectangle({ x: margin, y: y - 40, width, height: 62, color: rgb(0.96, 0.97, 0.98) });
+  for (const [index, [label, value]] of fields.entries()) {
+    const x = margin + 14 + index * 172;
+    page.drawText(label, { x, y: y + 5, size: 8, font: bold, color: muted });
+    const lines = wrapText(safePdfText(value, preserveUnicode), bodyFont, 10, 145);
+    for (const [lineIndex, line] of lines.entries()) page.drawText(line, { x, y: y - 15 - lineIndex * 13, size: 10, font: bodyFont, color: ink });
+  }
+  y -= 62;
+  section("Observed Strengths");
+  for (const strength of feedback.strengths) {
+    page.drawCircle({ x: margin + 3, y: y + 3, size: 2, color: navy });
+    drawWrapped(strength, 11, ink, 14); y -= 7;
+  }
+  section("Development Priority");
   drawWrapped(feedback.improvement);
-  section("Try this next time");
-  drawWrapped(feedback.nextStep);
+  section("Recommended Practice");
+  const actionLines = wrapText(safePdfText(feedback.nextStep, preserveUnicode), bodyFont, 11, width - 30);
+  const actionHeight = actionLines.length * 17 + 24;
+  page.drawRectangle({ x: margin, y: y - actionHeight + 15, width, height: actionHeight, color: rgb(0.96, 0.97, 0.98) });
+  page.drawRectangle({ x: margin, y: y - actionHeight + 15, width: 3, height: actionHeight, color: gold });
+  for (const line of actionLines) { page.drawText(line, { x: margin + 15, y, size: 11, font: bodyFont, color: ink }); y -= 17; }
+  y -= 15;
   if (y < 90) throw new Error("Practice report exceeded its single-page layout.");
   page.drawRectangle({ x: margin, y: 65, width, height: 1, color: rgb(0.86, 0.89, 0.91) });
-  for (const [index, line] of wrapText(simpleReportDisclaimer, regular, 9, width).entries()) {
-    page.drawText(line, { x: margin, y: 48 - index * 13, size: 9, font: regular, color: muted });
+  for (const [index, line] of wrapText(simpleReportDisclaimer, regular, 8, width - 75).entries()) {
+    page.drawText(line, { x: margin, y: 48 - index * 12, size: 8, font: regular, color: muted });
   }
+  page.drawText("Page 1 of 1", { x: 520, y: 48, size: 8, font: regular, color: muted });
   return pdf.save();
 }

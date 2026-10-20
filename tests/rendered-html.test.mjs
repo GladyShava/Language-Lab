@@ -341,10 +341,11 @@ test("presents reflection as a full-width report with a checked PDF download", a
     readFile(new URL("../app/globals.css", import.meta.url), "utf8"),
   ]);
   assert.match(source, /className="practice-reflection-report"/i);
-  assert.match(source, /Your conversation report/i);
-  assert.match(source, /What went well/);
-  assert.match(source, /One thing to improve/);
-  assert.match(source, /Try this next time/);
+  assert.match(source, /Language Practice Report/i);
+  assert.match(source, /Session Overview/);
+  assert.match(source, /Observed Strengths/);
+  assert.match(source, /Development Priority/);
+  assert.match(source, /Recommended Practice/);
   assert.doesNotMatch(source, /Current coaching stage|Overall practice profile|rubricDimensionDefinitions/);
   assert.match(source, /fetch\(reportHref\)/i);
   assert.match(source, /URL\.createObjectURL/i);
