@@ -71,7 +71,10 @@ test("recovers a missing memory session, saves the final response once, and gene
   const report = await worker.fetch(new Request("http://localhost/api/practice/report", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ snapshot: completed.snapshot }) }), runtimeEnv, runtimeContext);
   assert.equal(report.status, 200);
   assert.match(report.headers.get("content-type"), /application\/pdf/);
-  assert.equal(new TextDecoder().decode((await report.arrayBuffer()).slice(0, 4)), "%PDF");
+  const pdfBytes = new Uint8Array(await report.arrayBuffer());
+  assert.equal(new TextDecoder().decode(pdfBytes.slice(0, 4)), "%PDF");
+  const { PDFDocument } = await import("pdf-lib");
+  assert.equal((await PDFDocument.load(pdfBytes)).getPageCount(), 1);
   const invalid = structuredClone(completed.snapshot);
   invalid.turns[1].sequence = 99;
   const rejected = await worker.fetch(new Request("http://localhost/api/practice/report", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ snapshot: invalid }) }), runtimeEnv, runtimeContext);
@@ -339,6 +342,10 @@ test("presents reflection as a full-width report with a checked PDF download", a
   ]);
   assert.match(source, /className="practice-reflection-report"/i);
   assert.match(source, /Your conversation report/i);
+  assert.match(source, /What went well/);
+  assert.match(source, /One thing to improve/);
+  assert.match(source, /Try this next time/);
+  assert.doesNotMatch(source, /Current coaching stage|Overall practice profile|rubricDimensionDefinitions/);
   assert.match(source, /fetch\(reportHref\)/i);
   assert.match(source, /URL\.createObjectURL/i);
   assert.match(source, /link\.download = filename/i);

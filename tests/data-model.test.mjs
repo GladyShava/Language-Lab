@@ -73,7 +73,8 @@ test("builds a unique 2,000-question Maya bank and keeps the PDF feedback-only",
   assert.match(bank, /conversationQuestionBank\.length !== 2000/);
   assert.match(bank, /new Set\(conversationQuestionBank/);
   assert.doesNotMatch(report, /section\("Conversation transcript"\)/);
-  assert.match(report, /section\("Adaptive coaching profile"\)/);
+  for (const title of ["Your session", "What went well", "One thing to improve", "Try this next time"]) assert.ok(report.includes(`section("${title}")`));
+  assert.doesNotMatch(report, /overallScore|currentStage|rubricDimensionDefinitions/);
   assert.match(report, /@pdf-lib\/fontkit/);
   assert.match(report, /preserveUnicode/);
   assert.match(reportRoute, /NotoSansCJKsc-Regular\.otf/);

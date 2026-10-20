@@ -2,7 +2,8 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { evaluateAdaptiveConversation, rubricDimensionDefinitions, type AdaptiveRubricProfile } from "@/lib/conversation/adaptive-rubric";
+import { evaluateAdaptiveConversation, type AdaptiveRubricProfile } from "@/lib/conversation/adaptive-rubric";
+import { createSimpleFeedback, simpleReportDisclaimer } from "@/lib/report/simple-feedback";
 import { readPracticeBackup, savePracticeBackup } from "@/lib/practice/recovery";
 import type { PracticeSnapshot } from "@/lib/practice/store";
 import { readLocalRecording } from "@/lib/practice/local-recordings";
@@ -123,6 +124,7 @@ export default function TranscriptPage() {
   }), [filter, query, transcript]);
   const learnerCount = transcript.filter((line) => line.role === "learner").length;
   const recordedCount = transcript.filter((line) => line.role === "learner" && line.recordingUrl).length;
+  const simpleFeedback = rubricProfile ? createSimpleFeedback(rubricProfile) : null;
 
   function stopPlayback() {
     playbackRun.current += 1;
@@ -217,35 +219,20 @@ export default function TranscriptPage() {
 
       {loadNote && <p className="transcript-notice" role="status">{loadNote}</p>}
       {reportNote && <p className="transcript-notice" role="status">{reportNote}</p>}
-      {rubricProfile && (
+      {simpleFeedback && (
         <section className="practice-reflection-report" aria-labelledby="practice-reflection-heading">
           <div className="report-heading">
-            <div><span className="eyebrow">PRACTICE REFLECTION</span><h2 id="practice-reflection-heading">Your conversation report</h2><p>Clear, descriptive guidance based on what you demonstrated in this conversation.</p></div>
+            <div><span className="eyebrow">PRACTICE REFLECTION</span><h2 id="practice-reflection-heading">Your conversation report</h2><p>A simple summary and one next step for your practice.</p></div>
             <button type="button" className="button button-gold" onClick={() => void downloadReport()} disabled={!reportHref || downloadingReport}>{downloadingReport ? "Preparing PDF..." : "Download PDF report"}</button>
           </div>
 
-          <div className="report-profile-summary">
-            <div className="report-profile-highlight"><span>Current coaching stage</span><strong>{rubricProfile.currentStage}</strong><small>Based on {rubricProfile.turnsAnalyzed} {rubricProfile.turnsAnalyzed === 1 ? "response" : "responses"}</small></div>
-            <div className="report-profile-highlight"><span>Overall practice profile</span><strong>{rubricProfile.overallScore.toFixed(1)} <small>/ 5</small></strong><small>A weighted coaching profile, not a test score</small></div>
-            <div className="report-dimensions">
-              {rubricDimensionDefinitions.map((definition) => {
-                const dimension = rubricProfile.dimensions[definition.key];
-                return <div className="report-dimension" key={definition.key}><div><strong>{definition.label}</strong><span>{dimension.score.toFixed(1)} / 5</span></div><div className="report-dimension-track"><i style={{ width: `${dimension.score * 20}%` }} /></div></div>;
-              })}
-            </div>
-          </div>
-
+          <p className="report-session-summary"><strong>Your session:</strong> {languagePack.pack.displayName} · {learnerCount} {learnerCount === 1 ? "response" : "responses"}</p>
           <div className="report-insight-grid">
-            <article><span className="report-card-label">WHAT WORKED WELL</span><h3>Your strengths</h3>{rubricProfile.strengths.map((item) => <p key={item}>{item}</p>)}</article>
-            <article><span className="report-card-label">WHAT TO DEVELOP</span><h3>Your growth areas</h3>{rubricProfile.growthAreas.map((item) => <p key={item}>{item}</p>)}</article>
-            <article className="report-next-step"><span className="report-card-label">NEXT CONVERSATION</span><h3>One focused recommendation</h3><p>{rubricProfile.recommendation}</p></article>
-            <article className="report-phrase"><span className="report-card-label">TRY THIS PHRASE</span><h3>A stronger way to express the idea</h3><p>“{rubricProfile.strongerPhrase}”</p></article>
+            <article><h3>What went well</h3>{simpleFeedback.strengths.map(item => <p key={item}>{item}</p>)}</article>
+            <article><h3>One thing to improve</h3><p>{simpleFeedback.improvement}</p></article>
+            <article className="report-next-step"><h3>Try this next time</h3><p>{simpleFeedback.nextStep}</p></article>
           </div>
-
-          {!rubricProfile.languageUse.targetLocaleTag.toLowerCase().startsWith("en") && <div className={`report-language-use ${rubricProfile.languageUse.status === "mixed_language" ? "attention" : ""}`}><strong>Target-language consistency</strong><p>{rubricProfile.languageUse.summary}</p>{rubricProfile.languageUse.englishWords.length > 0 && <p>English detected: {rubricProfile.languageUse.englishWords.join(", ")}</p>}<small>Transcript-based coaching check; speech recognition can occasionally mishear a word.</small></div>}
-
-          <div className="report-reflection-row"><div><span className="report-card-label">REFLECT WHILE YOU REPLAY</span><h3>Listen once, then consider:</h3></div><ol><li>What did you communicate clearly?</li><li>Where could one detail or example strengthen your answer?</li><li>What would you try differently in your next conversation?</li></ol></div>
-          <p className="report-disclaimer">{rubricProfile.disclaimer}</p>
+          <p className="report-disclaimer">{simpleReportDisclaimer}</p>
         </section>
       )}
       <div className="replay-layout">
@@ -284,7 +271,7 @@ export default function TranscriptPage() {
             <button className="button button-gold replay-main" disabled={!transcript.length} onClick={playingAll || playingId ? stopPlayback : () => void playConversation()}>{playingAll || playingId ? "Stop replay" : "Play from beginning"}</button>
           </div>
           <div className="replay-summary"><span className="eyebrow">SESSION SUMMARY</span><div><strong>{transcript.length}</strong><span>Total turns</span></div><div><strong>{learnerCount}</strong><span>Your responses</span></div><div><strong>{recordedCount}</strong><span>Voice recordings</span></div></div>
-          <div className="privacy-card"><strong>Coaching profile only</strong><p>{rubricProfile?.disclaimer ?? "This studio does not provide an official OPI rating, certification, pass/fail result, or readiness decision."}</p></div>
+          <div className="privacy-card"><strong>Practice feedback only</strong><p>{simpleReportDisclaimer}</p></div>
         </aside>
       </div>
     </main>

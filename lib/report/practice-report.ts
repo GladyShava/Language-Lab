@@ -1,10 +1,9 @@
-import { PDFDocument, PDFPage, PDFFont, StandardFonts, rgb } from "pdf-lib";
+import { PDFDocument, type PDFFont, StandardFonts, rgb } from "pdf-lib";
 import fontkit from "@pdf-lib/fontkit";
-import { evaluateAdaptiveConversation, rubricDimensionDefinitions } from "@/lib/conversation/adaptive-rubric";
-import { inferPromptKind } from "@/lib/conversation/response-assessment";
-import type { ConversationTurn } from "@/lib/conversation/types";
+import { evaluateAdaptiveConversation } from "@/lib/conversation/adaptive-rubric";
 import type { PracticeSnapshot } from "@/lib/practice/store";
 import type { SavedRecording } from "@/lib/practice/recording-store";
+import { createSimpleFeedback, simpleReportDisclaimer } from "./simple-feedback";
 
 interface PracticeReportInput {
   snapshot: PracticeSnapshot;
@@ -17,225 +16,74 @@ const navy = rgb(0, 49 / 255, 92 / 255);
 const gold = rgb(1, 198 / 255, 39 / 255);
 const ink = rgb(20 / 255, 43 / 255, 68 / 255);
 const muted = rgb(91 / 255, 111 / 255, 132 / 255);
-const pale = rgb(245 / 255, 247 / 255, 250 / 255);
-const white = rgb(1, 1, 1);
 
-function safePdfText(value: string, preserveUnicode = false): string {
-  const normalized = value
-    .replace(/[‘’]/g, "'")
-    .replace(/[“”]/g, '"')
-    .replace(/[–—]/g, "-")
-    .replace(/…/g, "...");
-  if (preserveUnicode) return normalized.normalize("NFC");
-  return normalized
-    .normalize("NFKD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .replace(/[^\x20-\x7E\n]/g, "?");
+function safePdfText(value: string, preserveUnicode: boolean): string {
+  const text = value.replace(/[‘’]/g, "'").replace(/[“”]/g, '"').replace(/[–—]/g, "-").replace(/…/g, "...");
+  return preserveUnicode ? text.normalize("NFC") : text.normalize("NFKD").replace(/[\u0300-\u036f]/g, "").replace(/[^\x20-\x7E\n]/g, "?");
 }
 
-function wrapText(text: string, font: PDFFont, size: number, maxWidth: number, preserveUnicode = false): string[] {
-  const paragraphs = safePdfText(text, preserveUnicode).split(/\n/);
+function wrapText(text: string, font: PDFFont, size: number, width: number): string[] {
   const lines: string[] = [];
-  for (const paragraph of paragraphs) {
-    const words = paragraph.split(/\s+/).filter(Boolean);
-    if (!words.length) { lines.push(""); continue; }
-    let line = "";
-    for (const word of words) {
-      const candidate = line ? `${line} ${word}` : word;
-      if (font.widthOfTextAtSize(candidate, size) <= maxWidth) { line = candidate; continue; }
-      if (line) { lines.push(line); line = ""; }
-      if (font.widthOfTextAtSize(word, size) <= maxWidth) { line = word; continue; }
-      for (const character of Array.from(word)) {
-        const characterCandidate = `${line}${character}`;
-        if (font.widthOfTextAtSize(characterCandidate, size) <= maxWidth) line = characterCandidate;
-        else { if (line) lines.push(line); line = character; }
-      }
-    }
+  let line = "";
+  for (const word of text.split(/\s+/).filter(Boolean)) {
+    const candidate = line ? `${line} ${word}` : word;
+    if (font.widthOfTextAtSize(candidate, size) <= width) { line = candidate; continue; }
     if (line) lines.push(line);
+    line = "";
+    for (const character of Array.from(word)) {
+      if (line && font.widthOfTextAtSize(line + character, size) > width) { lines.push(line); line = ""; }
+      line += character;
+    }
   }
+  if (line) lines.push(line);
   return lines;
-}
-
-function durationLabel(milliseconds: number): string {
-  const totalSeconds = Math.max(0, Math.round(milliseconds / 1000));
-  return `${Math.floor(totalSeconds / 60)}m ${totalSeconds % 60}s`;
-}
-
-function topicLabels(turns: readonly ConversationTurn[]): string[] {
-  const labels: Record<string, string> = {
-    introduction: "Personal introduction",
-    work_studies: "Work or studies",
-    background: "Background and influences",
-    family: "Family",
-    hobby: "Hobbies",
-    free_time: "Free time",
-    hometown: "Place description",
-    event: "Past event narration",
-    technology: "Opinion and examples",
-    daily_routine: "Daily routine",
-    community: "Hypothetical situation",
-    study_abroad: "Advantages and disadvantages",
-    role_play: "Role-play",
-    weekend: "Future plans",
-    next_topic: "Next practice topic",
-  };
-  return [...new Set(turns.filter((turn) => turn.role === "coach").map((turn) => labels[inferPromptKind(turn.text)]).filter(Boolean))];
-}
-
-function nextPracticeFocus(turns: readonly ConversationTurn[]): string {
-  const learner = turns.filter((turn) => turn.role === "learner" && !turn.text.startsWith("[Spoken response recorded"));
-  if (learner.length < 2) return "Complete a slightly longer conversation so you can practice responding across more than one topic.";
-  const averageWords = learner.reduce((total, turn) => total + turn.text.split(/\s+/).filter(Boolean).length, 0) / learner.length;
-  if (averageWords < 10) return "Add one supporting detail and one example to each answer while keeping your response natural.";
-  if (!turns.some((turn) => turn.role === "coach" && inferPromptKind(turn.text) === "event")) return "In your next session, include a past event and organize it with a clear beginning, middle and ending.";
-  if (!turns.some((turn) => turn.role === "coach" && ["technology", "study_abroad", "community"].includes(inferPromptKind(turn.text)))) return "In your next session, practice giving an opinion, explaining why and supporting it with an example.";
-  return "Replay one response, notice where you paused, then record a second version with a clearer opening, supporting detail and closing thought.";
 }
 
 export async function createPracticeReport(input: PracticeReportInput): Promise<Uint8Array> {
   const pdf = await PDFDocument.create();
-  if (input.unicodeFontBytes) pdf.registerFontkit(fontkit);
   const regular = await pdf.embedFont(StandardFonts.Helvetica);
   const bold = await pdf.embedFont(StandardFonts.HelveticaBold);
-  const unicodeFont = input.unicodeFontBytes ? await pdf.embedFont(input.unicodeFontBytes, { subset: true }) : null;
-  const bodyFont = unicodeFont ?? regular;
-  const preservesUnicode = Boolean(unicodeFont);
-  pdf.setTitle("Beyond Hello - Practice and Reflection Report");
-  pdf.setAuthor("Beyond Hello");
-  pdf.setSubject("Practice and reflection report");
-
-  let page: PDFPage = pdf.addPage([612, 792]);
-  pdf.removePage(0);
-  let y = 0;
+  if (input.unicodeFontBytes) pdf.registerFontkit(fontkit);
+  const bodyFont = input.unicodeFontBytes ? await pdf.embedFont(input.unicodeFontBytes, { subset: true }) : regular;
+  const preserveUnicode = Boolean(input.unicodeFontBytes);
+  const page = pdf.addPage([612, 792]);
   const margin = 48;
-  const pageWidth = 612;
-  const contentWidth = pageWidth - margin * 2;
-
-  const addPage = () => {
-    page = pdf.addPage([612, 792]);
-    page.drawRectangle({ x: 0, y: 720, width: 612, height: 72, color: navy });
-    page.drawRectangle({ x: 0, y: 716, width: 612, height: 4, color: gold });
-    page.drawText("BEYOND HELLO", { x: margin, y: 759, size: 10, font: bold, color: gold });
-    page.drawText("Practice and Reflection Report", { x: margin, y: 736, size: 20, font: bold, color: white });
-    y = 688;
-  };
-
-  const ensureSpace = (height: number) => { if (y - height < 58) addPage(); };
-  const drawLines = (lines: string[], options: { size?: number; font?: PDFFont; color?: ReturnType<typeof rgb>; indent?: number; gap?: number } = {}) => {
-    const size = options.size ?? 10;
-    const selectedFont = options.font ?? regular;
-    const lineGap = options.gap ?? size + 4;
-    for (const line of lines) {
-      ensureSpace(lineGap);
-      page.drawText(line, { x: margin + (options.indent ?? 0), y, size, font: selectedFont, color: options.color ?? ink });
-      y -= lineGap;
+  const width = 516;
+  let y = 682;
+  pdf.setTitle("Beyond Hello - Your practice report");
+  pdf.setAuthor("Beyond Hello");
+  page.drawRectangle({ x: 0, y: 712, width: 612, height: 80, color: navy });
+  page.drawRectangle({ x: 0, y: 708, width: 612, height: 4, color: gold });
+  page.drawText("BEYOND HELLO", { x: margin, y: 761, size: 10, font: bold, color: gold });
+  page.drawText("Your practice report", { x: margin, y: 733, size: 24, font: bold, color: rgb(1, 1, 1) });
+  const drawWrapped = (text: string, size = 12, color = ink) => {
+    for (const line of wrapText(safePdfText(text, preserveUnicode), bodyFont, size, width)) {
+      page.drawText(line, { x: margin, y, size, font: bodyFont, color });
+      y -= size + 6;
     }
   };
-  const drawWrapped = (text: string, options: { size?: number; font?: PDFFont; color?: ReturnType<typeof rgb>; indent?: number; width?: number; gap?: number } = {}) => {
-    const size = options.size ?? 10;
-    const selectedFont = options.font ?? bodyFont;
-    const indent = options.indent ?? 0;
-    drawLines(wrapText(text, selectedFont, size, options.width ?? contentWidth - indent, selectedFont === bodyFont && preservesUnicode), { ...options, size, font: selectedFont, indent });
-  };
   const section = (title: string) => {
-    ensureSpace(38);
-    y -= 8;
-    page.drawText(safePdfText(title.toUpperCase()), { x: margin, y, size: 10, font: bold, color: navy });
-    y -= 8;
-    page.drawRectangle({ x: margin, y, width: contentWidth, height: 1, color: gold });
-    y -= 18;
+    y -= 22;
+    page.drawText(title, { x: margin, y, size: 14, font: bold, color: navy });
+    y -= 10;
+    page.drawRectangle({ x: margin, y, width, height: 1, color: gold });
+    y -= 23;
   };
-
-  addPage();
-  const turns = input.snapshot.turns;
-  const learnerTurns = turns.filter((turn) => turn.role === "learner");
-  const startedAt = new Date(turns[0]?.occurredAt ?? Date.now());
-  const endedAt = new Date(turns.at(-1)?.occurredAt ?? startedAt);
-  const sessionDuration = Math.max(0, endedAt.getTime() - startedAt.getTime());
-  const recordedDuration = input.recordings.reduce((total, recording) => total + recording.durationMs, 0);
-  const rubricProfile = evaluateAdaptiveConversation(turns, input.snapshot.localeTag);
-
-  page.drawText(safePdfText(input.snapshot.title, preservesUnicode), { x: margin, y, size: 24, font: bodyFont, color: navy });
-  y -= 26;
-  drawWrapped(`${input.languageName} practice - ${startedAt.toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" })}`, { size: 11, color: muted });
-
-  section("Session overview");
-  page.drawRectangle({ x: margin, y: y - 66, width: contentWidth, height: 76, color: pale });
-  const overviewY = y - 14;
-  const metrics = [
-    [String(turns.length), "Conversation turns"],
-    [String(learnerTurns.length), "Your responses"],
-    [String(input.recordings.length), "Saved recordings"],
-    [durationLabel(recordedDuration || sessionDuration), recordedDuration ? "Recorded speaking" : "Session length"],
-  ];
-  metrics.forEach(([value, label], index) => {
-    const x = margin + 18 + index * 126;
-    page.drawText(value, { x, y: overviewY, size: 18, font: bold, color: navy });
-    page.drawText(label, { x, y: overviewY - 18, size: 8.5, font: regular, color: muted });
-  });
-  y -= 86;
-
-  section("Adaptive coaching profile");
-  drawWrapped(`Current coaching stage: ${rubricProfile.currentStage}`, { size: 15, font: bold, color: navy });
-  drawWrapped(`Overall practice profile: ${rubricProfile.overallScore.toFixed(1)} / 5`, { size: 11, font: bold, color: navy });
-  drawWrapped(`Based on ${rubricProfile.turnsAnalyzed} ${rubricProfile.turnsAnalyzed === 1 ? "response" : "responses"}. This is a weighted coaching profile, not a test score.`, { size: 9, color: muted });
-  drawWrapped(rubricProfile.disclaimer, { size: 8.5, color: muted });
-  y -= 6;
-  for (const definition of rubricDimensionDefinitions) {
-    const dimension = rubricProfile.dimensions[definition.key];
-    ensureSpace(34);
-    page.drawText(`${definition.label}: ${dimension.score.toFixed(1)} / 5`, { x: margin, y, size: 10, font: bold, color: navy });
-    y -= 14;
-    drawWrapped(dimension.evidence, { size: 9, color: muted, indent: 10, width: contentWidth - 10 });
-    y -= 4;
+  const feedback = createSimpleFeedback(evaluateAdaptiveConversation(input.snapshot.turns, input.snapshot.localeTag));
+  const responses = input.snapshot.turns.filter(turn => turn.role === "learner").length;
+  const date = new Date(input.snapshot.turns[0]?.occurredAt ?? Date.now()).toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" });
+  section("Your session");
+  drawWrapped(`${input.languageName} | ${date} | ${responses} ${responses === 1 ? "response" : "responses"}`, 11, muted);
+  section("What went well");
+  for (const strength of feedback.strengths) { drawWrapped(`- ${strength}`); y -= 5; }
+  section("One thing to improve");
+  drawWrapped(feedback.improvement);
+  section("Try this next time");
+  drawWrapped(feedback.nextStep);
+  if (y < 90) throw new Error("Practice report exceeded its single-page layout.");
+  page.drawRectangle({ x: margin, y: 65, width, height: 1, color: rgb(0.86, 0.89, 0.91) });
+  for (const [index, line] of wrapText(simpleReportDisclaimer, regular, 9, width).entries()) {
+    page.drawText(line, { x: margin, y: 48 - index * 13, size: 9, font: regular, color: muted });
   }
-
-  section("Strengths");
-  for (const strength of rubricProfile.strengths) {
-    drawWrapped(`- ${strength}`, { size: 10 });
-    y -= 4;
-  }
-
-  section("Growth areas");
-  for (const growthArea of rubricProfile.growthAreas) {
-    drawWrapped(`- ${growthArea}`, { size: 10 });
-    y -= 4;
-  }
-
-  section("Next conversation");
-  drawWrapped(rubricProfile.recommendation || nextPracticeFocus(turns), { size: 11 });
-  y -= 8;
-  drawWrapped(`Stronger phrase to try: "${rubricProfile.strongerPhrase}"`, { size: 10, font: bodyFont, color: navy });
-  y -= 8;
-  drawWrapped("Replay one response and record it again with a clear opening, one supporting detail and a closing thought.", { size: 9, color: muted });
-
-  if (!rubricProfile.languageUse.targetLocaleTag.toLowerCase().startsWith("en")) {
-    section("Target-language consistency");
-    drawWrapped(rubricProfile.languageUse.status === "mixed_language" ? "English appeared in the transcribed practice." : "The target language was maintained in the available transcript.", { size: 12, font: bold, color: navy });
-    drawWrapped(rubricProfile.languageUse.summary, { size: 10 });
-    if (rubricProfile.languageUse.englishWords.length) drawWrapped(`English words to replace next time: ${rubricProfile.languageUse.englishWords.join(", ")}`, { size: 10, font: bold, color: navy });
-    drawWrapped("This is a transcript-based coaching check. Speech recognition can occasionally mishear a word.", { size: 8.5, color: muted });
-  }
-
-  section("What you practiced");
-  const topics = topicLabels(turns);
-  drawWrapped(topics.length ? topics.join(" - ") : "Personal conversation and spontaneous speaking", { size: 11 });
-  y -= 4;
-  drawWrapped("This is a practice record, not a score, official evaluation, proficiency label or readiness decision.", { size: 9, color: muted });
-
-  section("Reflection checklist");
-  drawWrapped("1. Listen to your response once without reading the transcript.", { size: 10 });
-  y -= 4;
-  drawWrapped("2. Read the transcript and identify one place where another detail or example would make your meaning clearer.", { size: 10 });
-  y -= 4;
-  drawWrapped("3. Record the answer again in your own words and compare how naturally the ideas connect.", { size: 10 });
-
-  const pages = pdf.getPages();
-  pages.forEach((reportPage, index) => {
-    reportPage.drawRectangle({ x: margin, y: 38, width: contentWidth, height: 1, color: rgb(220 / 255, 226 / 255, 232 / 255) });
-    reportPage.drawText("Practice guidance only - not an official evaluation", { x: margin, y: 21, size: 8, font: regular, color: muted });
-    reportPage.drawText(`Page ${index + 1} of ${pages.length}`, { x: 510, y: 21, size: 8, font: regular, color: muted });
-  });
-
   return pdf.save();
 }

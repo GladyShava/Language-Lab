@@ -200,6 +200,8 @@ textarea:focus, input:focus { outline: 2px solid rgba(1, 121, 183, 0.22); border
 .report-insight-grid article { min-height: 170px; padding: 1.2rem; border: 1px solid var(--line); background: var(--soft); }
 .report-insight-grid h3, .report-reflection-row h3 { margin-top: 0.25rem; color: var(--navy); font-size: 1.15rem; }
 .report-insight-grid p { margin-top: 0.6rem; color: var(--muted); }
+.report-session-summary { margin-top: 1.1rem; color: var(--muted); }
+.report-insight-grid .report-next-step { grid-column: 1 / -1; min-height: auto; }
 .report-card-label { color: var(--twilight); font-size: 0.73rem; font-weight: 900; letter-spacing: 0.1em; }
 .report-insight-grid .report-next-step { border-color: var(--navy); background: var(--navy); }
 .report-insight-grid .report-next-step h3 { color: var(--white); }
