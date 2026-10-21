@@ -125,7 +125,6 @@ export default function TranscriptPage() {
     return matchesFilter && line.text.toLowerCase().includes(query.toLowerCase());
   }), [filter, query, transcript]);
   const learnerCount = transcript.filter((line) => line.role === "learner").length;
-  const recordedCount = transcript.filter((line) => line.role === "learner" && line.recordingUrl).length;
   const simpleFeedback = rubricProfile ? createSimpleFeedback(rubricProfile) : null;
 
   function stopPlayback() {
@@ -215,29 +214,25 @@ export default function TranscriptPage() {
   return (
     <main className="workspace-page transcript-page">
       <div className="workspace-heading">
-        <div><span className="eyebrow">TRANSCRIPT / REPLAY - {languagePack.pack.displayName}</span><h1>{loadedSession ? sessionTitle : "Your practice conversation"}</h1></div>
+        <div><h1 id="practice-report-title">{loadedSession ? "Language Practice Report" : "Practice Review"}</h1>{loadedSession && <p className="report-session-objective">{sessionTitle}</p>}</div>
         <div className="button-row">{reportHref && <button type="button" onClick={() => void downloadReport()} disabled={downloadingReport} className="button button-quiet">{downloadingReport ? "Preparing PDF..." : "Download PDF report"}</button>}<Link href={communityHref} className="button button-quiet">Share anonymously (optional)</Link><Link href="/shadow" className="button button-gold">Hear a fluent example</Link></div>
       </div>
 
       {loadNote && <p className="transcript-notice" role="status">{loadNote}</p>}
       {reportNote && <p className="transcript-notice" role="status">{reportNote}</p>}
       {simpleFeedback && (
-        <section className="practice-reflection-report" aria-labelledby="practice-reflection-heading">
-          <div className="report-heading">
-            <div><span className="eyebrow">BEYOND HELLO</span><h2 id="practice-reflection-heading">Language Practice Report</h2><p>Session summary and development plan</p></div>
-            <button type="button" className="button button-gold" onClick={() => void downloadReport()} disabled={!reportHref || downloadingReport}>{downloadingReport ? "Preparing PDF..." : "Download PDF report"}</button>
-          </div>
-
+        <section className="practice-reflection-report" aria-labelledby="practice-report-title">
           <div className="formal-report-body">
             <section className="formal-report-section"><h3><span>01</span>Session Overview</h3><dl className="formal-report-metadata"><div><dt>Practice language</dt><dd>{languagePack.pack.displayName}</dd></div><div><dt>Session date</dt><dd>{sessionDate}</dd></div><div><dt>Responses</dt><dd>{learnerCount}</dd></div></dl></section>
             <section className="formal-report-section"><h3><span>02</span>Observed Strengths</h3><ul>{simpleFeedback.strengths.map(item => <li key={item}>{item}</li>)}</ul></section>
-            <section className="formal-report-section"><h3><span>03</span>Development Priority</h3><p>{simpleFeedback.improvement}</p></section>
-            <section className="formal-report-section formal-report-action"><h3><span>04</span>Recommended Practice</h3><p>{simpleFeedback.nextStep}</p></section>
+            <section className="formal-report-section formal-report-action"><h3><span>03</span>Next Practice Task</h3><p>{simpleFeedback.nextStep}</p></section>
           </div>
           <p className="report-disclaimer">{simpleReportDisclaimer}</p>
         </section>
       )}
-      <div className="replay-layout">
+      <details className="report-transcript-details">
+        <summary>Conversation transcript and recordings</summary>
+        <div className="report-transcript-content">
         <section className="transcript-card">
           <div className="replay-toolbar">
             <button className="button button-primary" onClick={playingAll ? stopPlayback : () => void playConversation()} disabled={loading || !transcript.length}>{playingAll ? "Stop replay" : "Play full conversation"}</button>
@@ -264,18 +259,8 @@ export default function TranscriptPage() {
           </div>
         </section>
 
-        <aside className="replay-aside">
-          <div className="audio-card">
-            <span className="eyebrow eyebrow-light">SESSION REPLAY</span><h2>{playingAll ? "Conversation playing" : playingId ? "Turn playing" : "Ready to replay"}</h2>
-            <p>AI responses are read aloud. Recorded learner responses play in the learner&apos;s original voice.</p>
-            <div className="large-wave" aria-hidden="true">| || | ||| || | ||| | || | ||| || |</div>
-            <div className="progress-track"><span style={{ width: transcript.length ? `${Math.max(5, ((active + 1) / transcript.length) * 100)}%` : "0%" }} /></div>
-            <button className="button button-gold replay-main" disabled={!transcript.length} onClick={playingAll || playingId ? stopPlayback : () => void playConversation()}>{playingAll || playingId ? "Stop replay" : "Play from beginning"}</button>
-          </div>
-          <div className="replay-summary"><span className="eyebrow">SESSION SUMMARY</span><div><strong>{transcript.length}</strong><span>Total turns</span></div><div><strong>{learnerCount}</strong><span>Your responses</span></div><div><strong>{recordedCount}</strong><span>Voice recordings</span></div></div>
-          <div className="privacy-card"><strong>Practice feedback only</strong><p>{simpleReportDisclaimer}</p></div>
-        </aside>
-      </div>
+        </div>
+      </details>
     </main>
   );
 }

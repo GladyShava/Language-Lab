@@ -65,3 +65,17 @@ test("does not mistake Spanish music vocabulary or accented words for English", 
   assert.equal(analyzeResponseLanguageUse("También me interesa la educación y conocer otras culturas.", "es-ES").status, "on_target");
   assert.equal(analyzeResponseLanguageUse("Soy estudiante and I really enjoy learning languages.", "es-ES").status, "mixed_language");
 });
+
+test("report tasks use transcript evidence instead of requiring the learner to question the interviewer", async () => {
+  const { createSimpleFeedback } = await loadModule("../lib/report/simple-feedback.ts");
+  const profile = {
+    turnsAnalyzed: 1,
+    languageUse: { status: "on_target", targetLanguage: "Spanish" },
+    responseHistory: [{ signals: { wordCount: 25, repetitionRatio: 0, connectorCount: 2, elaborationCount: 2, directness: "answered", repairStrategyCount: 0 } }],
+    dimensions: { curiosityInquiry: { score: 1 } },
+  };
+  const feedback = createSimpleFeedback(profile);
+  assert.ok(feedback.strengths.some(strength => /Reasons or examples/.test(strength)));
+  assert.doesNotMatch(feedback.nextStep, /follow-up question|question after/i);
+  assert.notEqual(feedback.nextStep, feedback.improvement);
+});

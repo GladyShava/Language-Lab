@@ -344,8 +344,8 @@ test("presents reflection as a full-width report with a checked PDF download", a
   assert.match(source, /Language Practice Report/i);
   assert.match(source, /Session Overview/);
   assert.match(source, /Observed Strengths/);
-  assert.match(source, /Development Priority/);
-  assert.match(source, /Recommended Practice/);
+  assert.match(source, /Next Practice Task/);
+  assert.doesNotMatch(source, /Development Priority|Recommended Practice/);
   assert.doesNotMatch(source, /Current coaching stage|Overall practice profile|rubricDimensionDefinitions/);
   assert.match(source, /fetch\(reportHref\)/i);
   assert.match(source, /URL\.createObjectURL/i);
@@ -566,6 +566,32 @@ test("advances through unused localized questions after answered turns", async (
   }
 
   assert.equal(new Set(questions).size, questions.length);
+});
+
+test("keeps accented Spanish transcripts out of PDF font selection and recognizes Spanish reasons", async () => {
+  const worker = await loadWorker("spanish-report-font-regression");
+  const post = body => worker.fetch(new Request("http://localhost/api/practice", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) }), runtimeEnv, runtimeContext);
+  const start = await (await post({ action: "start", languagePackId: "lang_es_es_v1", participantName: "Ana" })).json();
+  const completed = await (await post({ action: "respond", sessionId: start.snapshot.sessionId, storageMode: start.storageMode, text: "Estudio administración porque me interesa trabajar con otras personas. Por ejemplo, ayudo a mis compañeros a organizar proyectos.", completeAfterResponse: true })).json();
+  assert.ok(completed.rubricProfile.responseHistory[0].signals.connectorCount >= 2);
+  assert.ok(completed.rubricProfile.responseHistory[0].signals.elaborationCount >= 2);
+  const originalFetch = globalThis.fetch;
+  let fontRequests = 0;
+  globalThis.fetch = async (input, init) => {
+    if (String(input.url ?? input).includes("/fonts/")) { fontRequests++; throw new Error("Transcript font must not be requested"); }
+    return originalFetch(input, init);
+  };
+  try {
+    const response = await worker.fetch(new Request("http://localhost/api/practice/report", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ snapshot: completed.snapshot }) }), runtimeEnv, runtimeContext);
+    assert.equal(response.status, 200);
+    const { PDFDocument, PDFDict, PDFName } = await import("pdf-lib");
+    const document = await PDFDocument.load(await response.arrayBuffer());
+    assert.equal(document.getPageCount(), 1);
+    const fonts = document.context.enumerateIndirectObjects().map(([, object]) => object).filter(object => object instanceof PDFDict && object.get(PDFName.of("Type"))?.toString() === "/Font");
+    assert.equal(fonts.length, 2);
+    assert.ok(fonts.every(font => font.get(PDFName.of("Subtype"))?.toString() === "/Type1"));
+    assert.equal(fontRequests, 0);
+  } finally { globalThis.fetch = originalFetch; }
 });
 
 test("continues a Spanish conversation after brief replies and retains the cooking context", async () => {

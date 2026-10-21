@@ -14,7 +14,13 @@ export function createSimpleFeedback(profile: AdaptiveRubricProfile) {
   if (signals.some(signal => signal.repairStrategyCount > 0)) strengths.push("Alternative wording was used to clarify meaning.");
   if (!strengths.length) strengths.push("The session included practice in responding to questions.");
   if (profile.languageUse.status === "mixed_language") return { strengths: strengths.slice(0, 2), improvement: `Maintain consistent use of ${profile.languageUse.targetLanguage} throughout each response.`, nextStep: `Review one response and re-record it entirely in ${profile.languageUse.targetLanguage}, replacing any English words.` };
-  const focus = (Object.entries(profile.dimensions) as Array<[RubricDimensionKey, { score: number }]>).sort((left, right) => left[1].score - right[1].score)[0][0];
+  const averageWords = signals.reduce((total, signal) => total + signal.wordCount, 0) / signals.length;
+  // Prioritize observable needs in the transcript. A student is not required
+  // to ask the interviewer questions, so that rubric score is not a default task.
+  const focus: RubricDimensionKey = averageWords < 12 ? "communicationEffectiveness"
+    : signals.some(signal => signal.repetitionRatio > 0.25) ? "vocabularyGrowth"
+    : signals.every(signal => signal.connectorCount === 0) ? "strategicCommunication"
+    : "confidenceFluency";
   const focusText: Record<RubricDimensionKey, [string, string]> = {
     communicationEffectiveness: ["State the main idea clearly before presenting supporting details.", "Re-record one response using a clear main point, one supporting reason, and one concrete example."],
     vocabularyGrowth: ["Use more precise vocabulary to reduce unnecessary repetition.", "Review one response, identify a repeated word, and re-record the response using a more precise alternative."],

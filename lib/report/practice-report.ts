@@ -1,5 +1,4 @@
 import { PDFDocument, type PDFFont, StandardFonts, rgb } from "pdf-lib";
-import fontkit from "@pdf-lib/fontkit";
 import { evaluateAdaptiveConversation } from "@/lib/conversation/adaptive-rubric";
 import type { PracticeSnapshot } from "@/lib/practice/store";
 import type { SavedRecording } from "@/lib/practice/recording-store";
@@ -9,7 +8,6 @@ interface PracticeReportInput {
   snapshot: PracticeSnapshot;
   languageName: string;
   recordings: readonly SavedRecording[];
-  unicodeFontBytes?: Uint8Array;
 }
 
 const navy = rgb(0, 49 / 255, 92 / 255);
@@ -17,9 +15,9 @@ const gold = rgb(1, 198 / 255, 39 / 255);
 const ink = rgb(20 / 255, 43 / 255, 68 / 255);
 const muted = rgb(91 / 255, 111 / 255, 132 / 255);
 
-function safePdfText(value: string, preserveUnicode: boolean): string {
+function safePdfText(value: string): string {
   const text = value.replace(/[‘’]/g, "'").replace(/[“”]/g, '"').replace(/[–—]/g, "-").replace(/…/g, "...");
-  return preserveUnicode ? text.normalize("NFC") : text.normalize("NFKD").replace(/[\u0300-\u036f]/g, "").replace(/[^\x20-\x7E\n]/g, "?");
+  return text.normalize("NFC");
 }
 
 function wrapText(text: string, font: PDFFont, size: number, width: number): string[] {
@@ -43,9 +41,9 @@ export async function createPracticeReport(input: PracticeReportInput): Promise<
   const pdf = await PDFDocument.create();
   const regular = await pdf.embedFont(StandardFonts.Helvetica);
   const bold = await pdf.embedFont(StandardFonts.HelveticaBold);
-  if (input.unicodeFontBytes) pdf.registerFontkit(fontkit);
-  const bodyFont = input.unicodeFontBytes ? await pdf.embedFont(input.unicodeFontBytes, { subset: true }) : regular;
-  const preserveUnicode = Boolean(input.unicodeFontBytes);
+  // Report text is generated in English; transcript characters must not change
+  // its font. Standard PDF fonts also retain the Latin accents used in labels.
+  const bodyFont = regular;
   const page = pdf.addPage([612, 792]);
   const margin = 48;
   const width = 516;
@@ -54,10 +52,10 @@ export async function createPracticeReport(input: PracticeReportInput): Promise<
   pdf.setAuthor("Beyond Hello");
   page.drawText("BEYOND HELLO", { x: margin, y: 750, size: 10, font: bold, color: navy });
   page.drawText("Language Practice Report", { x: margin, y: 717, size: 23, font: bold, color: navy });
-  page.drawText("Session summary and development plan", { x: margin, y: 696, size: 11, font: regular, color: muted });
+  page.drawText("Session summary and next practice task", { x: margin, y: 696, size: 11, font: regular, color: muted });
   page.drawRectangle({ x: margin, y: 679, width, height: 2, color: gold });
-  const drawWrapped = (text: string, size = 11, color = ink, indent = 0) => {
-    for (const line of wrapText(safePdfText(text, preserveUnicode), bodyFont, size, width - indent)) {
+  const drawWrapped = (text: string, size = 12, color = ink, indent = 0) => {
+    for (const line of wrapText(safePdfText(text), bodyFont, size, width - indent)) {
       page.drawText(line, { x: margin + indent, y, size, font: bodyFont, color });
       y -= size + 6;
     }
@@ -80,23 +78,21 @@ export async function createPracticeReport(input: PracticeReportInput): Promise<
   for (const [index, [label, value]] of fields.entries()) {
     const x = margin + 14 + index * 172;
     page.drawText(label, { x, y: y + 5, size: 8, font: bold, color: muted });
-    const lines = wrapText(safePdfText(value, preserveUnicode), bodyFont, 10, 145);
-    for (const [lineIndex, line] of lines.entries()) page.drawText(line, { x, y: y - 15 - lineIndex * 13, size: 10, font: bodyFont, color: ink });
+    const lines = wrapText(safePdfText(value), bodyFont, 11, 145);
+    for (const [lineIndex, line] of lines.entries()) page.drawText(line, { x, y: y - 15 - lineIndex * 14, size: 11, font: bodyFont, color: ink });
   }
   y -= 62;
   section("Observed Strengths");
   for (const strength of feedback.strengths) {
     page.drawCircle({ x: margin + 3, y: y + 3, size: 2, color: navy });
-    drawWrapped(strength, 11, ink, 14); y -= 7;
+    drawWrapped(strength, 12, ink, 14); y -= 7;
   }
-  section("Development Priority");
-  drawWrapped(feedback.improvement);
-  section("Recommended Practice");
-  const actionLines = wrapText(safePdfText(feedback.nextStep, preserveUnicode), bodyFont, 11, width - 30);
-  const actionHeight = actionLines.length * 17 + 24;
+  section("Next Practice Task");
+  const actionLines = wrapText(safePdfText(feedback.nextStep), bodyFont, 12, width - 30);
+  const actionHeight = actionLines.length * 19 + 24;
   page.drawRectangle({ x: margin, y: y - actionHeight + 15, width, height: actionHeight, color: rgb(0.96, 0.97, 0.98) });
   page.drawRectangle({ x: margin, y: y - actionHeight + 15, width: 3, height: actionHeight, color: gold });
-  for (const line of actionLines) { page.drawText(line, { x: margin + 15, y, size: 11, font: bodyFont, color: ink }); y -= 17; }
+  for (const line of actionLines) { page.drawText(line, { x: margin + 15, y, size: 12, font: bodyFont, color: ink }); y -= 19; }
   y -= 15;
   if (y < 90) throw new Error("Practice report exceeded its single-page layout.");
   page.drawRectangle({ x: margin, y: 65, width, height: 1, color: rgb(0.86, 0.89, 0.91) });

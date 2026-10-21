@@ -74,6 +74,8 @@ function tokenize(text: string): string[] {
   return text.toLocaleLowerCase().match(/[\p{L}\p{M}'-]+/gu) ?? [];
 }
 
+const spanishStopWords = new Set(["a", "al", "algo", "como", "con", "de", "del", "el", "ella", "en", "es", "esa", "ese", "esta", "este", "la", "las", "lo", "los", "me", "mi", "mis", "no", "para", "pero", "por", "porque", "que", "se", "si", "sin", "su", "sus", "un", "una", "unos", "unas", "y", "yo"]);
+
 function directnessFor(prompt: string, response: string, localeTag: string): ResponseOutcome {
   if (/^en\b/i.test(localeTag)) return assessResponse(prompt, response).outcome;
   const units = /^(ja|zh)/i.test(localeTag) ? (response.match(/[\p{L}\p{N}]/gu) ?? []).length : tokenize(response).length;
@@ -84,7 +86,8 @@ function directnessFor(prompt: string, response: string, localeTag: string): Res
 
 export function extractResponseSignals(prompt: string, response: string, localeTag = "en-US"): ResponseSignals {
   const words = tokenize(response);
-  const contentWords = words.filter((word) => !stopWords.has(word));
+  const isSpanish = /^es(?:-|$)/i.test(localeTag);
+  const contentWords = words.filter(word => !(isSpanish ? spanishStopWords : stopWords).has(word));
   const uniqueWords = new Set(contentWords);
   const mostFrequent = contentWords.reduce((counts, word) => counts.set(word, (counts.get(word) ?? 0) + 1), new Map<string, number>());
   const repeatedWords = [...mostFrequent.values()].filter((count) => count > 1).reduce((total, count) => total + count - 1, 0);
@@ -92,8 +95,8 @@ export function extractResponseSignals(prompt: string, response: string, localeT
   const questionCount = matches(response, /[?？]/g);
   const fillerCount = matches(response, /\b(um+|uh+|erm+|hmm+|you know)\b/gi) + matches(response, /(?:^|[,;])\s*like\s*[,;]/gi);
   const hesitationCount = matches(response, /\.{3,}|--+|\b(maybe|perhaps|i guess|i am not sure|i'm not sure)\b/gi);
-  const connectorCount = matches(response, /\b(because|however|although|therefore|while|whereas|since|so that|on the other hand|as a result|for example|for instance)\b/gi);
-  const elaborationCount = matches(response, /\b(because|for example|for instance|this means|the reason|such as|in particular)\b/gi);
+  const connectorCount = isSpanish ? matches(response, /\b(porque|aunque|sin embargo|por eso|por lo tanto|por ejemplo|en cambio|mientras|ya que|además)\b/gi) : matches(response, /\b(because|however|although|therefore|while|whereas|since|so that|on the other hand|as a result|for example|for instance)\b/gi);
+  const elaborationCount = isSpanish ? matches(response, /\b(porque|por ejemplo|esto significa|la razón|tales como|en particular|ya que)\b/gi) : matches(response, /\b(because|for example|for instance|this means|the reason|such as|in particular)\b/gi);
   const inquiryCount = matches(response, /\b(why|how|what if|could you|would you|do you think|what do you think)\b/gi);
   const repairStrategyCount = matches(response, /\b(i mean|what i mean is|another way to say it|it is like|it's like|similar to|the word i am looking for|i do not know the exact word|i don't know the exact word|in other words)\b/gi);
   const comparisonCount = matches(response, /\b(compared with|compared to|unlike|whereas|more than|less than|similar to|on the other hand|both|in contrast)\b/gi);
