@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { evaluateAdaptiveConversation, type AdaptiveRubricProfile } from "@/lib/conversation/adaptive-rubric";
-import { createSimpleFeedback, simpleReportDisclaimer } from "@/lib/report/simple-feedback";
+import { createSimpleFeedback } from "@/lib/report/simple-feedback";
 import { readPracticeBackup, savePracticeBackup } from "@/lib/practice/recovery";
 import type { PracticeSnapshot } from "@/lib/practice/store";
 import { readLocalRecording } from "@/lib/practice/local-recordings";
@@ -215,21 +215,21 @@ export default function TranscriptPage() {
     <main className="workspace-page transcript-page">
       <div className="workspace-heading">
         <div><h1 id="practice-report-title">{loadedSession ? "Language Practice Report" : "Practice Review"}</h1>{loadedSession && <p className="report-session-objective">{sessionTitle}</p>}</div>
-        <div className="button-row">{reportHref && <button type="button" onClick={() => void downloadReport()} disabled={downloadingReport} className="button button-quiet">{downloadingReport ? "Preparing PDF..." : "Download PDF report"}</button>}<Link href={communityHref} className="button button-quiet">Share anonymously (optional)</Link><Link href="/shadow" className="button button-gold">Hear a fluent example</Link></div>
+        <div className="button-row">{reportHref && <button type="button" onClick={() => void downloadReport()} disabled={downloadingReport} className="button button-primary">{downloadingReport ? "Preparing PDF..." : "Download PDF report"}</button>}</div>
       </div>
 
       {loadNote && <p className="transcript-notice" role="status">{loadNote}</p>}
       {reportNote && <p className="transcript-notice" role="status">{reportNote}</p>}
       {simpleFeedback && (
         <section className="practice-reflection-report" aria-labelledby="practice-report-title">
+          <dl className="formal-report-metadata" aria-label="Session details"><div><dt>Language</dt><dd>{languagePack.pack.displayName}</dd></div><div><dt>Date</dt><dd>{sessionDate}</dd></div><div><dt>Responses</dt><dd>{learnerCount}</dd></div></dl>
           <div className="formal-report-body">
-            <section className="formal-report-section"><h3><span>01</span>Session Overview</h3><dl className="formal-report-metadata"><div><dt>Practice language</dt><dd>{languagePack.pack.displayName}</dd></div><div><dt>Session date</dt><dd>{sessionDate}</dd></div><div><dt>Responses</dt><dd>{learnerCount}</dd></div></dl></section>
-            <section className="formal-report-section"><h3><span>02</span>Observed Strengths</h3><ul>{simpleFeedback.strengths.map(item => <li key={item}>{item}</li>)}</ul></section>
-            <section className="formal-report-section formal-report-action"><h3><span>03</span>Next Practice Task</h3><p>{simpleFeedback.nextStep}</p></section>
+            <section className="formal-report-section"><h2>Observed strengths</h2><ul>{simpleFeedback.strengths.map(item => <li key={item}>{item}</li>)}</ul></section>
+            <section className="formal-report-section formal-report-action"><h2>Next practice task</h2><p>{simpleFeedback.nextStep}</p></section>
           </div>
-          <p className="report-disclaimer">{simpleReportDisclaimer}</p>
         </section>
       )}
+      {loadedSession && <nav className="report-follow-up" aria-label="Continue practising"><Link href="/shadow">Hear a fluent example <span aria-hidden="true">→</span></Link><Link href={communityHref}>Share anonymously (optional) <span aria-hidden="true">→</span></Link></nav>}
       <details className="report-transcript-details">
         <summary>Conversation transcript and recordings</summary>
         <div className="report-transcript-content">

@@ -75,7 +75,9 @@ test("report tasks use transcript evidence instead of requiring the learner to q
     dimensions: { curiosityInquiry: { score: 1 } },
   };
   const feedback = createSimpleFeedback(profile);
-  assert.ok(feedback.strengths.some(strength => /Reasons or examples/.test(strength)));
+  assert.ok(feedback.strengths.some(strength => /reasons or examples/.test(strength)));
+  assert.equal(feedback.strengths.length, 1, "linking words and supporting reasons should not repeat the same strength");
+  assert.match(feedback.nextStep, /past experience/);
   assert.doesNotMatch(feedback.nextStep, /follow-up question|question after/i);
   assert.notEqual(feedback.nextStep, feedback.improvement);
 });

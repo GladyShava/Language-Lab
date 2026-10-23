@@ -342,9 +342,9 @@ test("presents reflection as a full-width report with a checked PDF download", a
   ]);
   assert.match(source, /className="practice-reflection-report"/i);
   assert.match(source, /Language Practice Report/i);
-  assert.match(source, /Session Overview/);
-  assert.match(source, /Observed Strengths/);
-  assert.match(source, /Next Practice Task/);
+  assert.match(source, /aria-label="Session details"/);
+  assert.match(source, /Observed strengths/);
+  assert.match(source, /Next practice task/);
   assert.doesNotMatch(source, /Development Priority|Recommended Practice/);
   assert.doesNotMatch(source, /Current coaching stage|Overall practice profile|rubricDimensionDefinitions/);
   assert.match(source, /fetch\(reportHref\)/i);
